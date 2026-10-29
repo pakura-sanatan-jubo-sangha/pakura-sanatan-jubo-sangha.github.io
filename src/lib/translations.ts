@@ -231,7 +231,7 @@ export const t = {
     // Dashboard Cards
     totalMembers: 'Total Members',
     membersSubtitle: 'Active members registered',
-    totalMemberCapital: 'Total Member Capital',
+    totalMemberCapital: 'Total Member  Balance',
     totalLoanProfit: 'Total Loan Profit',
     moneyOutside: 'Money Outside (Principal)',
     cashBalance: 'Cash Balance',

@@ -478,14 +478,118 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Delete member from Firestore
+   * Delete member and all associated collections from Firestore
    */
-  static async deleteMember(systemId: string): Promise<void> {
-    const path = `members/${systemId}`;
+  static async deleteMember(systemId: string, phone?: string): Promise<void> {
+    await this.deleteMemberAndAllAssociatedData(systemId, phone);
+  }
+
+  static async deleteMemberAndAllAssociatedData(systemId: string, phone?: string): Promise<void> {
     try {
-      await deleteDoc(doc(db, 'members', systemId));
+      // 1. Delete member doc by systemId
+      await deleteDoc(doc(db, 'members', systemId)).catch(() => {});
+
+      // 2. Delete contributions of this member
+      const contribSnap = await getDocs(query(collection(db, 'contributions'), where('memberSystemId', '==', systemId)));
+      for (const d of contribSnap.docs) {
+        await deleteDoc(doc(db, 'contributions', d.id)).catch(() => {});
+      }
+
+      // 3. Delete receipts of this member
+      const rctSnap = await getDocs(query(collection(db, 'receipts'), where('memberSystemId', '==', systemId)));
+      for (const d of rctSnap.docs) {
+        await deleteDoc(doc(db, 'receipts', d.id)).catch(() => {});
+      }
+
+      // 4. Delete withdrawals of this member
+      const wthSnap = await getDocs(query(collection(db, 'member_withdrawals'), where('memberSystemId', '==', systemId)));
+      for (const d of wthSnap.docs) {
+        await deleteDoc(doc(db, 'member_withdrawals', d.id)).catch(() => {});
+      }
+
+      // 5. Delete user profiles mapped to this member (except main super admin)
+      const usersSnap = await getDocs(query(collection(db, 'users'), where('memberSystemId', '==', systemId)));
+      for (const d of usersSnap.docs) {
+        const uData = d.data();
+        if (uData.email?.toLowerCase() !== 'freelancerkajolchandradas@gmail.com') {
+          await deleteDoc(doc(db, 'users', d.id)).catch(() => {});
+        }
+      }
+
+      // 6. If phone is provided, also wipe any user account associated with this phone
+      if (phone) {
+        const cleanPhone = normalizePhoneForAuth(phone);
+        if (cleanPhone) {
+          const allUsersSnap = await getDocs(collection(db, 'users'));
+          for (const ud of allUsersSnap.docs) {
+            const uData = ud.data();
+            if (uData.email?.toLowerCase() !== 'freelancerkajolchandradas@gmail.com') {
+              const uPhone = normalizePhoneForAuth(uData.phone || uData.username || '');
+              if (uPhone && (uPhone === cleanPhone || (cleanPhone.length >= 8 && uPhone.slice(-10) === cleanPhone.slice(-10)))) {
+                await deleteDoc(doc(db, 'users', ud.id)).catch(() => {});
+              }
+            }
+          }
+        }
+      }
     } catch (error) {
-      console.warn('Failed to delete member from Firestore:', error);
+      console.warn('Failed to delete member and associated data from Firestore:', error);
+    }
+  }
+
+  /**
+   * Wipe all collections in Firestore on database reset so old data never reappears
+   */
+  static async wipeAllDataForCleanReset(): Promise<void> {
+    try {
+      const collectionsToWipe = [
+        'members',
+        'contributions',
+        'loans',
+        'loan_payments',
+        'borrowers',
+        'incomes',
+        'expenses',
+        'receipts',
+        'transactions',
+        'profit_distributions',
+        'member_withdrawals',
+        'rules',
+        'meetings',
+      ];
+
+      for (const colName of collectionsToWipe) {
+        try {
+          const snap = await getDocs(collection(db, colName));
+          for (const d of snap.docs) {
+            await deleteDoc(doc(db, colName, d.id)).catch(() => {});
+          }
+        } catch {
+          // Continue with next collection
+        }
+      }
+
+      // Clear non-admin users
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        for (const d of usersSnap.docs) {
+          const data = d.data();
+          if (data.email?.toLowerCase() !== 'freelancerkajolchandradas@gmail.com') {
+            await deleteDoc(doc(db, 'users', d.id)).catch(() => {});
+          }
+        }
+      } catch {}
+
+      // Write meta reset timestamp doc so any delayed reads recognize the reset
+      try {
+        await setDoc(doc(db, '_system_meta', 'reset_state'), {
+          lastResetAt: Date.now(),
+          resetBy: 'freelancerkajolchandradas@gmail.com',
+          status: 'clean_reset_active',
+        }, { merge: true });
+      } catch {}
+    } catch (err) {
+      console.warn('Error during wipeAllDataForCleanReset:', err);
     }
   }
 
@@ -493,52 +597,7 @@ export class FirebaseSyncService {
    * Reset all financial records in Firestore and set all member balances to ৳0
    */
   static async resetFinancialDataInFirestore(members: Member[]): Promise<void> {
-    try {
-      // 1. Reset all member balances in Firestore to 0
-      for (const m of members) {
-        try {
-          await setDoc(
-            doc(db, 'members', m.systemId),
-            {
-              currentBalance: 0,
-              profitShareBalance: 0,
-              totalWithdrawn: 0,
-              updatedAt: new Date().toISOString().split('T')[0],
-            },
-            { merge: true }
-          );
-        } catch {
-          // Ignore individual member update error
-        }
-      }
-
-      // 2. Clear financial collections
-      const collectionsToClear = [
-        'contributions',
-        'loans',
-        'loan_payments',
-        'incomes',
-        'expenses',
-        'receipts',
-        'profit_distributions',
-        'member_withdrawals',
-        'transactions',
-        'borrowers',
-      ];
-
-      for (const colName of collectionsToClear) {
-        try {
-          const snap = await getDocs(collection(db, colName));
-          for (const d of snap.docs) {
-            await deleteDoc(doc(db, colName, d.id)).catch(() => {});
-          }
-        } catch {
-          // Ignore individual collection clear error
-        }
-      }
-    } catch (err) {
-      console.warn('Error during resetFinancialDataInFirestore:', err);
-    }
+    await this.wipeAllDataForCleanReset();
   }
 
   /**
@@ -880,6 +939,23 @@ export class FirebaseSyncService {
     const result: Partial<FullAppData> = {};
 
     try {
+      // Check if a database reset occurred
+      let lastResetAt = 0;
+      try {
+        const metaDoc = await getDoc(doc(db, '_system_meta', 'reset_state'));
+        if (metaDoc.exists()) {
+          lastResetAt = Number(metaDoc.data()?.lastResetAt) || 0;
+        }
+      } catch {}
+
+      const isItemAfterReset = (item: any): boolean => {
+        if (!lastResetAt) return true;
+        const dateVal = item.createdAt || item.updatedAt || item.date || item.contributionDate || item.issueDate;
+        if (!dateVal) return false;
+        const t = new Date(dateVal).getTime();
+        return !isNaN(t) && t > lastResetAt;
+      };
+
       const [
         usersSnap,
         membersSnap,
@@ -914,7 +990,15 @@ export class FirebaseSyncService {
         const users: UserAccount[] = [];
         usersSnap.value.forEach((d) => {
           const u = d.data();
-          if (u?.userId) users.push(u as UserAccount);
+          if (u?.userId) {
+            if (u.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' || u.isMainAdmin) {
+              users.push(u as UserAccount);
+            } else if (isItemAfterReset(u)) {
+              users.push(u as UserAccount);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'users', d.id)).catch(() => {});
+            }
+          }
         });
         if (users.length > 0) result.users = users;
       }
@@ -923,7 +1007,13 @@ export class FirebaseSyncService {
         const members: Member[] = [];
         membersSnap.value.forEach((d) => {
           const m = d.data();
-          if (m?.systemId) members.push(m as Member);
+          if (m?.systemId) {
+            if (isItemAfterReset(m)) {
+              members.push(m as Member);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'members', d.id)).catch(() => {});
+            }
+          }
         });
         if (members.length > 0) result.members = members;
       }
@@ -932,7 +1022,13 @@ export class FirebaseSyncService {
         const contributions: Contribution[] = [];
         contributionsSnap.value.forEach((d) => {
           const c = d.data();
-          if (c?.contributionId) contributions.push(c as Contribution);
+          if (c?.contributionId) {
+            if (isItemAfterReset(c)) {
+              contributions.push(c as Contribution);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'contributions', d.id)).catch(() => {});
+            }
+          }
         });
         if (contributions.length > 0) result.contributions = contributions;
       }
@@ -941,7 +1037,13 @@ export class FirebaseSyncService {
         const loans: Loan[] = [];
         loansSnap.value.forEach((d) => {
           const l = d.data();
-          if (l?.loanId) loans.push(l as Loan);
+          if (l?.loanId) {
+            if (isItemAfterReset(l)) {
+              loans.push(l as Loan);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'loans', d.id)).catch(() => {});
+            }
+          }
         });
         if (loans.length > 0) result.loans = loans;
       }
@@ -950,7 +1052,13 @@ export class FirebaseSyncService {
         const payments: LoanPayment[] = [];
         loanPaymentsSnap.value.forEach((d) => {
           const p = d.data();
-          if (p?.paymentId) payments.push(p as LoanPayment);
+          if (p?.paymentId) {
+            if (isItemAfterReset(p)) {
+              payments.push(p as LoanPayment);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'loan_payments', d.id)).catch(() => {});
+            }
+          }
         });
         if (payments.length > 0) result.loanPayments = payments;
       }
@@ -959,7 +1067,13 @@ export class FirebaseSyncService {
         const incomes: IncomeRecord[] = [];
         incomesSnap.value.forEach((d) => {
           const inc = d.data();
-          if (inc?.incomeId) incomes.push(inc as IncomeRecord);
+          if (inc?.incomeId) {
+            if (isItemAfterReset(inc)) {
+              incomes.push(inc as IncomeRecord);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'incomes', d.id)).catch(() => {});
+            }
+          }
         });
         if (incomes.length > 0) {
           result.incomes = incomes;
@@ -971,7 +1085,13 @@ export class FirebaseSyncService {
         const expenses: ExpenseRecord[] = [];
         expensesSnap.value.forEach((d) => {
           const exp = d.data();
-          if (exp?.expenseId) expenses.push(exp as ExpenseRecord);
+          if (exp?.expenseId) {
+            if (isItemAfterReset(exp)) {
+              expenses.push(exp as ExpenseRecord);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'expenses', d.id)).catch(() => {});
+            }
+          }
         });
         if (expenses.length > 0) {
           result.expenses = expenses;
@@ -983,7 +1103,13 @@ export class FirebaseSyncService {
         const receipts: Receipt[] = [];
         receiptsSnap.value.forEach((d) => {
           const r = d.data();
-          if (r?.receiptId) receipts.push(r as Receipt);
+          if (r?.receiptId) {
+            if (isItemAfterReset(r)) {
+              receipts.push(r as Receipt);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'receipts', d.id)).catch(() => {});
+            }
+          }
         });
         if (receipts.length > 0) result.receipts = receipts;
       }
@@ -992,7 +1118,13 @@ export class FirebaseSyncService {
         const rules: SocietyRule[] = [];
         rulesSnap.value.forEach((d) => {
           const r = d.data();
-          if (r?.ruleId) rules.push(r as SocietyRule);
+          if (r?.ruleId) {
+            if (isItemAfterReset(r)) {
+              rules.push(r as SocietyRule);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'rules', d.id)).catch(() => {});
+            }
+          }
         });
         if (rules.length > 0) result.rules = rules;
       }
@@ -1001,7 +1133,13 @@ export class FirebaseSyncService {
         const meetings: GeneralMeeting[] = [];
         meetingsSnap.value.forEach((d) => {
           const m = d.data();
-          if (m?.meetingId) meetings.push(m as GeneralMeeting);
+          if (m?.meetingId) {
+            if (isItemAfterReset(m)) {
+              meetings.push(m as GeneralMeeting);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'meetings', d.id)).catch(() => {});
+            }
+          }
         });
         if (meetings.length > 0) result.meetings = meetings;
       }
@@ -1010,7 +1148,13 @@ export class FirebaseSyncService {
         const dists: ProfitDistribution[] = [];
         distSnap.value.forEach((d) => {
           const di = d.data();
-          if (di?.distributionId) dists.push(di as ProfitDistribution);
+          if (di?.distributionId) {
+            if (isItemAfterReset(di)) {
+              dists.push(di as ProfitDistribution);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'profit_distributions', d.id)).catch(() => {});
+            }
+          }
         });
         if (dists.length > 0) result.profitDistributions = dists;
       }
@@ -1019,7 +1163,13 @@ export class FirebaseSyncService {
         const withdrawals: MemberWithdrawal[] = [];
         withdrawalsSnap.value.forEach((d) => {
           const w = d.data();
-          if (w?.withdrawalId) withdrawals.push(w as MemberWithdrawal);
+          if (w?.withdrawalId) {
+            if (isItemAfterReset(w)) {
+              withdrawals.push(w as MemberWithdrawal);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'member_withdrawals', d.id)).catch(() => {});
+            }
+          }
         });
         if (withdrawals.length > 0) result.memberWithdrawals = withdrawals;
       }
@@ -1028,7 +1178,13 @@ export class FirebaseSyncService {
         const transactions: any[] = [];
         transactionsSnap.value.forEach((d) => {
           const t = d.data();
-          if (t?.transactionId) transactions.push(t);
+          if (t?.transactionId) {
+            if (isItemAfterReset(t)) {
+              transactions.push(t);
+            } else if (lastResetAt) {
+              deleteDoc(doc(db, 'transactions', d.id)).catch(() => {});
+            }
+          }
         });
         if (transactions.length > 0) result.transactions = transactions;
       }

@@ -143,7 +143,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Card 2: Total Member Capital */}
         <div
-          onClick={() => onNavigate('contributions')}
+          onClick={() => onNavigate(currentUser.role === 'member' ? 'member_dashboard' : 'contributions')}
           className="cursor-pointer group p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs hover:border-amber-400 transition-all flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
@@ -160,7 +160,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
               {currentUser.role === 'member'
-                ? (language === 'bn' ? 'আমার সঞ্চয় খাতা দেখতে চাপুন' : 'Click to view my savings passbook')
+                ? (language === 'bn' ? 'আমার প্রোফাইল ও হিসাব খতিয়ান' : 'My profile & ledger')
                 : (language === 'bn' ? 'সদস্যদের জমাকৃত মাসিক চাঁদা/সঞ্চয়' : 'Sum of all members savings')}
             </p>
           </div>
@@ -168,7 +168,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Card 4: Total Loan Profit */}
         <div
-          onClick={() => onNavigate(currentUser.role === 'member' ? 'member_profit' : 'loans')}
+          onClick={() => onNavigate('loans')}
           className="cursor-pointer group p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs hover:border-amber-400 transition-all flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">

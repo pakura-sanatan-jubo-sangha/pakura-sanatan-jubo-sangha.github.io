@@ -314,18 +314,24 @@ export const getAccessToken = async (): Promise<string | null> => {
   return null;
 };
 
+export const clearCachedAccessToken = () => {
+  cachedAccessToken = null;
+  try {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('psys_google_access_token');
+    }
+  } catch {
+    // Ignore
+  }
+};
+
 export const firebaseLogout = async () => {
   try {
     await signOut(auth);
   } catch (err) {
     console.warn('Sign out warning:', err);
   }
-  cachedAccessToken = null;
-  try {
-    sessionStorage.removeItem('psys_google_access_token');
-  } catch {
-    // Ignore
-  }
+  clearCachedAccessToken();
 };
 
 // Aliases & Phone Auth

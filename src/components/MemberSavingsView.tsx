@@ -118,13 +118,14 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                 </span>
               )}
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold mt-1 tracking-tight">
-              {language === 'bn' ? `সদস্য সঞ্চয়: ${member.name}` : `Member Savings: ${member.name}`}
+            <h2 className="text-xl sm:text-2xl font-bold mt-1 text-white tracking-tight">
+              {member.name}
             </h2>
-            <p className="text-xs sm:text-sm text-emerald-100/90 mt-1">
-              {language === 'bn'
-                ? 'আপনার পরিশোধিত সকল মাসিক সঞ্চয়ের ইতিহাস এবং বর্তমান বকেয়া কিস্তির তথ্য।'
-                : 'Complete payment history and outstanding savings payments.'}
+            <p className="text-xs sm:text-sm text-emerald-100/90 mt-0.5">
+              {language === 'bn' ? 'মাসিক নির্ধারিত সঞ্চয়:' : 'Monthly Contribution:'}{' '}
+              <span className="font-bold text-white">৳{monthlyAmount.toLocaleString()}</span>
+              {' • '}{language === 'bn' ? 'পরিশোধের শেষ তারিখ:' : 'Due Date:'}{' '}
+              <span className="font-bold text-white">{dueDay} {language === 'bn' ? 'তারিখ' : 'th'}</span>
             </p>
           </div>
 

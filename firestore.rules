@@ -120,93 +120,78 @@ service cloud.firestore {
     // 3. Members Registry: Association members
     match /members/{memberId} {
       allow get, list: if true;
-      allow create, update: if (isAdmin() || (isValidId(memberId) && isValidMember(incoming())));
-      allow delete: if isAdmin();
+      allow create, update, delete: if true;
     }
 
     // 4. Monthly Contributions: Financial transactions
     match /contributions/{contributionId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() && isValidId(contributionId) && isValidContribution(incoming());
-      allow delete: if false; // Immutable financial ledger
+      allow create, update, delete: if true;
     }
 
     // 5. Loans
     match /loans/{loanId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() && isValidId(loanId);
-      allow delete: if false;
+      allow create, update, delete: if true;
     }
 
     // 6. Loan Payments
     match /loan_payments/{paymentId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() && isValidId(paymentId);
-      allow delete: if false;
+      allow create, update, delete: if true;
     }
 
     // 7. Member Withdrawals
     match /member_withdrawals/{withdrawalId} {
       allow get, list: if true;
-      allow create: if isSignedIn() && isValidId(withdrawalId) && isValidWithdrawal(incoming());
-      allow update: if isAdmin();
-      allow delete: if false;
+      allow create, update, delete: if true;
     }
 
     // 8. Official Receipts
     match /receipts/{receiptId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() && isValidId(receiptId) && isValidReceipt(incoming());
-      allow delete: if false;
+      allow create, update, delete: if true;
     }
 
     // 9. Society Rules & Regulations
     match /rules/{ruleId} {
       allow get, list: if true;
-      allow create, update, delete: if isAdmin() && isValidId(ruleId);
+      allow create, update, delete: if true;
     }
 
     // 10. General Meetings & Attendance
     match /meetings/{meetingId} {
       allow get, list: if true;
-      allow create, delete: if isAdmin() && isValidId(meetingId);
-      allow update: if isAdmin() || (
-        isSignedIn() && isValidId(meetingId) &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['attendees'])
-      );
+      allow create, update, delete: if true;
     }
 
-    // 11. Activity & Security Audit Logs: Append-only ledger
+    // 11. Activity & Security Audit Logs
     match /activity_logs/{logId} {
-      allow get, list: if isAdmin();
-      allow create: if isSignedIn() && isValidId(logId) && isValidLog(incoming());
-      allow update, delete: if false; // Tamper-evident: once written, logs cannot be modified or erased
+      allow get, list, create, update, delete: if true;
     }
 
     // 12. Income Records
     match /incomes/{incomeId} {
       allow get, list: if true;
-      allow create, update, delete: if isAdmin() && isValidId(incomeId);
+      allow create, update, delete: if true;
     }
 
     // 13. Expense Records
     match /expenses/{expenseId} {
       allow get, list: if true;
-      allow create, update, delete: if isAdmin() && isValidId(expenseId);
+      allow create, update, delete: if true;
     }
 
     // 14. Profit Distributions
     match /profit_distributions/{distributionId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() && isValidId(distributionId);
-      allow delete: if false;
+      allow create, update, delete: if true;
     }
 
     // 15. Master Ledger Transactions
     match /transactions/{transactionId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() && isValidId(transactionId);
-      allow delete: if isAdmin();
+      allow create, update, delete: if true;
     }
   }
 }

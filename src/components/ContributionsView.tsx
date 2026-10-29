@@ -48,7 +48,6 @@ interface ContributionsViewProps {
   ) => void;
   onViewReceipt: (receiptId: string) => void;
   onOpenAddMember?: () => void;
-  onLoadSampleMembers?: () => void;
   onOpenLoginModal?: () => void;
 }
 
@@ -64,7 +63,6 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
   onRecordBulkContributions,
   onViewReceipt,
   onOpenAddMember,
-  onLoadSampleMembers,
   onOpenLoginModal,
 }) => {
   const t = getTranslation(language);
@@ -300,18 +298,18 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     }
   };
 
-  // Open single payment modal with smart defaults
+  // Open single payment modal with clean defaults (no automatic late fee additions)
   const openPayModal = (member: Member) => {
     setPayingMember(member);
     setPayAmount(currentExpectedPerMember);
     setPayMethod('cash');
     setPayNotes('');
-    setApplyLateFee(checkIfMonthIsLate(selectedMonth));
+    setApplyLateFee(false);
   };
 
   const openBulkModal = () => {
     setBulkAmount(currentExpectedPerMember);
-    setBulkApplyLateFee(checkIfMonthIsLate(selectedMonth));
+    setBulkApplyLateFee(false);
     setShowBulkModal(true);
   };
 
@@ -493,8 +491,8 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                       {language === 'bn'
-                        ? 'পূর্বের পরীক্ষামূলক সকল ডাটা মুছে ফেলা হয়েছে। এখন আপনি আসল সদস্য যোগ করতে পারেন, অথবা বোতাম ও হিসাব পরীক্ষার জন্য ৩টি নমুনা সদস্য লোড করতে পারেন।'
-                        : 'All prior demo data was cleared. You can now add real members or load 3 sample members to test all features.'}
+                        ? 'সদস্য তালিকা বর্তমানে সম্পূর্ণ নতুন ও পরিচ্ছন্ন। আপনি নিজ হাতে নতুন সদস্য যোগ করতে পারেন এবং তাদের সঠিক জমার হিসাব পরিচালনা করতে পারেন।'
+                        : 'Member roster is clean and brand new. You can add members manually and record their payment amounts.'}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
@@ -505,15 +503,6 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
                       >
                         <PlusCircle className="w-4 h-4" />
                         <span>{language === 'bn' ? 'নতুন সদস্য যোগ করুন' : 'Add New Member'}</span>
-                      </button>
-                    )}
-                    {onLoadSampleMembers && (
-                      <button
-                        onClick={onLoadSampleMembers}
-                        className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Users className="w-4 h-4" />
-                        <span>{language === 'bn' ? 'নমুনা সদস্য লোড করুন (লাইভ টেস্ট)' : 'Load Sample Members (Live Test)'}</span>
                       </button>
                     )}
                   </div>

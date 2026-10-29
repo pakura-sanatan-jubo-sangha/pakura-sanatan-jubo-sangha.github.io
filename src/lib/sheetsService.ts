@@ -13,7 +13,7 @@ import {
   UserAccount,
   FullAppData,
 } from '../types';
-import { getAccessToken, googleSignIn, auth } from './firebase';
+import { getAccessToken, googleSignIn, clearCachedAccessToken, auth } from './firebase';
 import { StorageService, MAIN_ADMIN_EMAIL, MAIN_ADMIN_ACCOUNT } from './storage';
 
 export const SPREADSHEET_TITLE = 'PAKURA_SANATAN_YUVA_SANGHA_DB';
@@ -56,7 +56,15 @@ export async function ensureAllSheetsExist(
 
   if (!getRes.ok) {
     const err = await getRes.json().catch(() => ({}));
-    throw new Error(err.error?.message || 'Failed to inspect Google Spreadsheet structure');
+    const errMsg = err.error?.message || 'Failed to inspect Google Spreadsheet structure';
+    if (getRes.status === 401 || err.error?.status === 'UNAUTHENTICATED' || errMsg.includes('invalid authentication credentials')) {
+      clearCachedAccessToken();
+      const authError: any = new Error(errMsg);
+      authError.status = 401;
+      authError.code = 'UNAUTHENTICATED';
+      throw authError;
+    }
+    throw new Error(errMsg);
   }
 
   const sheetData = await getRes.json();
@@ -689,7 +697,7 @@ function doPost(e) {
 
     // 3. Users / Admins: ONLY Admin Type, Name, Gmail Address (strictly NO passwords, pins, phone numbers or sensitive details)
     var usersList = [
-      ["Main Admin (প্রধান সুপার অ্যাডমিন)", "কাজল চন্দ্র দাস", "freelancerkajolchandradas@gmail.com"]
+      ["Main Admin (প্রধান সুপার অ্যাডমিন)", "Kajol Chandra Das", "freelancerkajolchandradas@gmail.com"]
     ];
     if (data.users && data.users.length > 0) {
       data.users.forEach(function(u) {
@@ -796,19 +804,27 @@ export class GoogleSheetsService {
     const googleUser = auth.currentUser;
     const currentUser = StorageService.getCurrentUser();
 
-    // Check Firebase Google Auth account
+    // Check Firebase Google Auth account:
+    // Only inspect real Google OAuth accounts. Synthetic member phone emails (@member.pakura.org) are internal phone-auth sessions and must not be treated as unauthorized Google accounts.
     if (googleUser && googleUser.email) {
-      if (googleUser.email.toLowerCase().trim() !== MAIN_ADMIN_EMAIL.toLowerCase()) {
-        throw new Error(
-          `অননুমোদিত গুগল একাউন্ট (${googleUser.email})! শুধুমাত্র প্রধান অ্যাডমিনের জিমেইল (${MAIN_ADMIN_EMAIL}) দিয়ে গুগল শিট সংশোধন বা সিঙ্ক করা সম্ভব।`
-        );
+      const isSyntheticMemberEmail =
+        googleUser.email.endsWith('@member.pakura.org') ||
+        googleUser.email.includes('member.pakura.org');
+
+      if (!isSyntheticMemberEmail) {
+        if (googleUser.email.toLowerCase().trim() !== MAIN_ADMIN_EMAIL.toLowerCase()) {
+          throw new Error(
+            `অননুমোদিত গুগল একাউন্ট (${googleUser.email})! শুধুমাত্র প্রধান অ্যাডমিনের জিমেইল (${MAIN_ADMIN_EMAIL}) দিয়ে গুগল শিট সংশোধন বা সিঙ্ক করা সম্ভব।`
+          );
+        }
       }
     }
 
-    // Check logged-in profile
+    // Check logged-in profile:
+    // Only Main Super Admin (freelancerkajolchandradas@gmail.com or isMainAdmin) can modify Google Sheets
     const isMainAdminProfile =
       currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-      (currentUser.role === 'admin' && currentUser.isMainAdmin === true);
+      (currentUser.role === 'admin' && (currentUser.isMainAdmin === true || currentUser.userId === 'USR-MAIN-ADMIN' || currentUser.userId === 'USR-000001'));
 
     if (!isMainAdminProfile) {
       throw new Error(
@@ -818,6 +834,11 @@ export class GoogleSheetsService {
   }
 
   static async getValidToken(interactive: boolean = false): Promise<string | null> {
+    // If a synthetic member phone session is present in Firebase Auth, sign it out so Google OAuth connects cleanly as admin
+    if (auth.currentUser?.email?.endsWith('@member.pakura.org') || auth.currentUser?.email?.includes('member.pakura.org')) {
+      await auth.signOut().catch(() => {});
+    }
+
     this.verifyMainAdminModifier();
     let token = await getAccessToken();
     if (!token && interactive) {
@@ -880,10 +901,29 @@ export class GoogleSheetsService {
     interactive: boolean = true
   ): Promise<boolean> {
     this.verifyMainAdminModifier();
-    const token = await this.getValidToken(interactive);
+    let token = await this.getValidToken(interactive);
     if (!token) {
       throw new Error('Google Sign-In is required to save data directly to Google Sheets.');
     }
-    return await syncStepByStepToGoogleSheets(token, spreadsheetId, appData, onProgress);
+    try {
+      return await syncStepByStepToGoogleSheets(token, spreadsheetId, appData, onProgress);
+    } catch (err: any) {
+      const isAuthErr =
+        err?.status === 401 ||
+        err?.code === 'UNAUTHENTICATED' ||
+        err?.message?.includes('invalid authentication credentials') ||
+        err?.message?.includes('UNAUTHENTICATED');
+
+      if (isAuthErr) {
+        clearCachedAccessToken();
+        if (interactive) {
+          const freshToken = await this.getValidToken(true);
+          if (freshToken) {
+            return await syncStepByStepToGoogleSheets(freshToken, spreadsheetId, appData, onProgress);
+          }
+        }
+      }
+      throw err;
+    }
   }
 }

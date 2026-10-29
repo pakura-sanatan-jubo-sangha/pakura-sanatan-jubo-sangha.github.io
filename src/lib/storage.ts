@@ -60,7 +60,7 @@ export const MAIN_ADMIN_ACCOUNT: UserAccount = {
   userId: 'USR-MAIN-ADMIN',
   username: 'kajol_admin',
   email: MAIN_ADMIN_EMAIL,
-  name: 'কাজল চন্দ্র দাস',
+  name: 'Kajol Chandra Das',
   displayName: 'কাজল চন্দ্র দাস (প্রধান অ্যাডমিন)',
   role: 'admin',
   isMainAdmin: true,
@@ -199,6 +199,7 @@ export class StorageService {
   }
 
   // Safe migration and initialization: strictly non-destructive (Zero-Data-Loss guaranteed)
+  // Safe migration and initialization: strictly non-destructive (Zero-Data-Loss guaranteed)
   static checkAndApplyCleanSlate() {
     if (typeof window === 'undefined') return;
     try {
@@ -216,6 +217,8 @@ export class StorageService {
         STORAGE_KEYS.USERS,
         STORAGE_KEYS.RULES,
         STORAGE_KEYS.LOGS,
+        STORAGE_KEYS.PROFIT_DISTRIBUTIONS,
+        STORAGE_KEYS.MEMBER_WITHDRAWALS,
       ];
       for (const k of keys) {
         if (!localStorage.getItem(k)) {
@@ -223,63 +226,35 @@ export class StorageService {
         }
       }
 
-      // Migration: Clean slate requested by user - delete all previous accounts and prepare for fresh registration
-      const migrationKey = 'pakura_member_fresh_start_01319113970_v9_no_otp';
-      if (!localStorage.getItem(migrationKey)) {
-        try {
-          // 1. Delete all user accounts from local storage
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify([]));
-
-          // 2. Reset session to View-Only visitor mode
-          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(VIEW_ONLY_USER));
-
-          // 3. Ensure all member records in local storage are unlinked for fresh registration
-          const rawMembers = localStorage.getItem(STORAGE_KEYS.MEMBERS);
-          let members: Member[] = rawMembers ? JSON.parse(rawMembers) : [];
-          // Remove old/conflicting accounts
-          members = members.filter((m) => {
-            const p = normalizePhoneNumber(m.phone);
-            return p !== '01711111111' && !m.name.includes('(হিসাব ১)') && !m.name.includes('(হিসাব ২)');
-          });
-
-          // Unlink all member records so any member can register afresh
-          members.forEach((m) => {
-            m.userId = '';
-          });
-
-          const kajolMember: Member = {
-            systemId: 'SYS-000001',
-            name: 'কাজল চন্দ্র দাস',
-            phone: '01319113970',
-            status: 'active',
-            currentBalance: 0,
-            userId: '', // unlinked for fresh registration
-            createdAt: '2026-10-12',
-            updatedAt: new Date().toISOString().split('T')[0],
-          };
-
-          const existingIdx = members.findIndex((m) => normalizePhoneNumber(m.phone) === '01319113970' || m.systemId === 'SYS-000001');
-          if (existingIdx !== -1) {
-            members[existingIdx] = {
-              ...members[existingIdx],
-              ...kajolMember,
-              currentBalance: members[existingIdx].currentBalance || 0,
-            };
-          } else {
-            members.unshift(kajolMember);
+      // Clean up any legacy auto-injected contributions and receipts
+      try {
+        const rawC = localStorage.getItem(STORAGE_KEYS.CONTRIBUTIONS);
+        if (rawC) {
+          const parsedC: Contribution[] = JSON.parse(rawC);
+          const cleanC = parsedC.filter(
+            (c) => c && c.notes !== 'মাসিক সঞ্চয় জমা (প্রারম্ভিক স্থিতি)' && !c.contributionId?.startsWith('CON-KJL-')
+          );
+          if (cleanC.length !== parsedC.length) {
+            localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(cleanC));
           }
-          localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(members));
-
-          // 4. In background, delete old user accounts from Firebase Firestore
-          FirebaseSyncService.deleteAllAccountsAndResetFresh('01319113970').catch(() => {});
-
-          localStorage.setItem(migrationKey, 'true');
-        } catch (migErr) {
-          console.warn('Member fresh reset notice:', migErr);
         }
-      }
+        const rawR = localStorage.getItem(STORAGE_KEYS.RECEIPTS);
+        if (rawR) {
+          const parsedR: Receipt[] = JSON.parse(rawR);
+          const cleanR = parsedR.filter(
+            (r) =>
+              r &&
+              !r.receiptId?.startsWith('RCT-KJL-') &&
+              !r.transactionId?.startsWith('CON-KJL-') &&
+              !r.purpose?.includes('প্রারম্ভিক স্থিতি')
+          );
+          if (cleanR.length !== parsedR.length) {
+            localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(cleanR));
+          }
+        }
+      } catch {}
 
-      // Automatically reconcile ledger so member balances are never zero when contributions exist
+      // Automatically reconcile ledger so member balances match their net contributions
       this.synchronizeMemberBalances();
     } catch {
       // Ignore storage restrictions
@@ -304,14 +279,7 @@ export class StorageService {
       const rawWithdrawals = localStorage.getItem(STORAGE_KEYS.MEMBER_WITHDRAWALS);
       const withdrawals: MemberWithdrawal[] = rawWithdrawals ? JSON.parse(rawWithdrawals) : [];
 
-      const rawReceipts = localStorage.getItem(STORAGE_KEYS.RECEIPTS);
-      let receipts: Receipt[] = rawReceipts ? JSON.parse(rawReceipts) : [];
-
       let hasMemberChanges = false;
-      let hasContributionChanges = false;
-      let hasReceiptChanges = false;
-      const today = new Date().toISOString().split('T')[0];
-      const currentMonth = today.slice(0, 7);
 
       members.forEach((m) => {
         // Calculate ledger net savings: (Total Regular + Booster Contributions Paid) - (Total Savings Withdrawn)
@@ -327,12 +295,11 @@ export class StorageService {
 
         const totalContributed = memberContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
         const totalSavingsWithdrawn = memberWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
-        if (memberContributions.length > 0) {
-          const netLedgerBalance = Math.max(0, totalContributed - totalSavingsWithdrawn);
-          if ((m.currentBalance ?? 0) !== netLedgerBalance && netLedgerBalance > 0) {
-            m.currentBalance = netLedgerBalance;
-            hasMemberChanges = true;
-          }
+        const netLedgerBalance = Math.max(0, totalContributed - totalSavingsWithdrawn);
+
+        if ((m.currentBalance ?? 0) !== netLedgerBalance) {
+          m.currentBalance = netLedgerBalance;
+          hasMemberChanges = true;
         }
       });
 
@@ -353,11 +320,35 @@ export class StorageService {
   static mergeCloudData(cloudData: Partial<FullAppData>) {
     if (!cloudData) return;
     try {
+      const isResetActive = localStorage.getItem('pakura_full_reset_active') === 'true';
+      const resetTimestamp = parseInt(localStorage.getItem('pakura_reset_timestamp') || '0', 10);
+
+      const isAfterReset = (dateStr?: string): boolean => {
+        if (!isResetActive || !resetTimestamp) return true;
+        if (!dateStr) return false;
+        const time = new Date(dateStr).getTime();
+        return !isNaN(time) && time > resetTimestamp;
+      };
+
+      const deletedIds = new Set<string>();
+      try {
+        const rawDel = localStorage.getItem('pakura_deleted_member_ids_v1');
+        if (rawDel) {
+          JSON.parse(rawDel).forEach((id: string) => deletedIds.add(id));
+        }
+      } catch {}
+
       if (cloudData.members && cloudData.members.length > 0) {
         const localMembers = this.getMembers();
         const map = new Map<string, Member>();
-        localMembers.forEach((m) => map.set(m.systemId, m));
-        cloudData.members.forEach((m) => map.set(m.systemId, m));
+        localMembers.forEach((m) => {
+          if (!deletedIds.has(m.systemId)) map.set(m.systemId, m);
+        });
+        cloudData.members.forEach((m) => {
+          if (deletedIds.has(m.systemId)) return;
+          if (isResetActive && !isAfterReset(m.createdAt || m.updatedAt)) return;
+          map.set(m.systemId, m);
+        });
         const merged = Array.from(map.values());
         localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
       }
@@ -365,7 +356,15 @@ export class StorageService {
         const localUsers = this.getUsers();
         const map = new Map<string, UserAccount>();
         localUsers.forEach((u) => map.set(u.userId, u));
-        cloudData.users.forEach((u) => map.set(u.userId, u));
+        cloudData.users.forEach((u) => {
+          if (u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() || u.isMainAdmin) {
+            map.set(u.userId, u);
+            return;
+          }
+          if (u.memberSystemId && deletedIds.has(u.memberSystemId)) return;
+          if (isResetActive && !isAfterReset(u.createdAt)) return;
+          map.set(u.userId, u);
+        });
         const merged = Array.from(map.values());
         this.saveUsers(merged);
       }
@@ -373,65 +372,121 @@ export class StorageService {
         const localContribs = this.getContributions();
         const map = new Map<string, Contribution>();
         localContribs.forEach((c) => map.set(c.contributionId, c));
-        cloudData.contributions.forEach((c) => map.set(c.contributionId, c));
+        cloudData.contributions.forEach((c) => {
+          if (deletedIds.has(c.memberSystemId)) return;
+          if (isResetActive && !isAfterReset(c.createdAt || c.contributionDate)) return;
+          if (c.notes === 'মাসিক সঞ্চয় জমা (প্রারম্ভিক স্থিতি)' || c.contributionId?.startsWith('CON-KJL-')) return;
+          map.set(c.contributionId, c);
+        });
         localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.loans && cloudData.loans.length > 0) {
         const localLoans = this.getLoans();
         const map = new Map<string, Loan>();
         localLoans.forEach((l) => map.set(l.loanId, l));
-        cloudData.loans.forEach((l) => map.set(l.loanId, l));
+        cloudData.loans.forEach((l) => {
+          if (deletedIds.has(l.borrowerId)) return;
+          if (isResetActive && !isAfterReset(l.createdAt || l.loanDate)) return;
+          map.set(l.loanId, l);
+        });
         localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.loanPayments && cloudData.loanPayments.length > 0) {
         const localPayments = this.getLoanPayments();
         const map = new Map<string, LoanPayment>();
         localPayments.forEach((p) => map.set(p.paymentId, p));
-        cloudData.loanPayments.forEach((p) => map.set(p.paymentId, p));
+        cloudData.loanPayments.forEach((p) => {
+          if (isResetActive && !isAfterReset(p.createdAt || p.paymentDate)) return;
+          map.set(p.paymentId, p);
+        });
         localStorage.setItem(STORAGE_KEYS.LOAN_PAYMENTS, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.incomes && cloudData.incomes.length > 0) {
         const localInc = this.getIncomeRecords();
         const map = new Map<string, IncomeRecord>();
         localInc.forEach((i) => map.set(i.incomeId, i));
-        cloudData.incomes.forEach((i) => map.set(i.incomeId, i));
+        cloudData.incomes.forEach((i) => {
+          if (isResetActive && !isAfterReset(i.createdAt || i.date)) return;
+          map.set(i.incomeId, i);
+        });
         localStorage.setItem(STORAGE_KEYS.INCOME, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.expenses && cloudData.expenses.length > 0) {
         const localExp = this.getExpenseRecords();
         const map = new Map<string, ExpenseRecord>();
         localExp.forEach((e) => map.set(e.expenseId, e));
-        cloudData.expenses.forEach((e) => map.set(e.expenseId, e));
+        cloudData.expenses.forEach((e) => {
+          if (isResetActive && !isAfterReset(e.createdAt || e.date)) return;
+          map.set(e.expenseId, e);
+        });
         localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.receipts && cloudData.receipts.length > 0) {
         const localR = this.getReceipts();
         const map = new Map<string, Receipt>();
         localR.forEach((r) => map.set(r.receiptId, r));
-        cloudData.receipts.forEach((r) => map.set(r.receiptId, r));
+        cloudData.receipts.forEach((r) => {
+          if (r.memberSystemId && deletedIds.has(r.memberSystemId)) return;
+          if (isResetActive && !isAfterReset(r.createdAt || r.date)) return;
+          map.set(r.receiptId, r);
+        });
         localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.profitDistributions && cloudData.profitDistributions.length > 0) {
         const localD = this.getProfitDistributions();
         const map = new Map<string, ProfitDistribution>();
         localD.forEach((d) => map.set(d.distributionId, d));
-        cloudData.profitDistributions.forEach((d) => map.set(d.distributionId, d));
+        cloudData.profitDistributions.forEach((d) => {
+          if (isResetActive && !isAfterReset(d.createdAt || d.date)) return;
+          map.set(d.distributionId, d);
+        });
         localStorage.setItem(STORAGE_KEYS.PROFIT_DISTRIBUTIONS, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.memberWithdrawals && cloudData.memberWithdrawals.length > 0) {
         const localW = this.getMemberWithdrawals();
         const map = new Map<string, MemberWithdrawal>();
         localW.forEach((w) => map.set(w.withdrawalId, w));
-        cloudData.memberWithdrawals.forEach((w) => map.set(w.withdrawalId, w));
+        cloudData.memberWithdrawals.forEach((w) => {
+          if (deletedIds.has(w.memberSystemId)) return;
+          if (isResetActive && !isAfterReset(w.createdAt || w.date)) return;
+          map.set(w.withdrawalId, w);
+        });
         localStorage.setItem(STORAGE_KEYS.MEMBER_WITHDRAWALS, JSON.stringify(Array.from(map.values())));
       }
       if (cloudData.transactions && cloudData.transactions.length > 0) {
         const localT = this.getTransactions();
         const map = new Map<string, Transaction>();
-        localT.forEach((t) => map.set(t.transactionId, t));
-        cloudData.transactions.forEach((t) => map.set(t.transactionId, t));
+        const refMap = new Map<string, string>();
+        const sigMap = new Map<string, string>();
+
+        localT.forEach((t) => {
+          map.set(t.transactionId, t);
+          if (t.referenceId) refMap.set(t.referenceId, t.transactionId);
+          const monthMatch = t.description?.match(/(\d{4}-\d{2})/);
+          const monthKey = monthMatch ? monthMatch[1] : '';
+          const sig = `${t.type}|${t.memberSystemId || t.partyName?.trim().toLowerCase()}|${monthKey || t.date}|${t.credit}|${t.debit}`;
+          sigMap.set(sig, t.transactionId);
+        });
+
+        cloudData.transactions.forEach((t) => {
+          if (t.memberSystemId && deletedIds.has(t.memberSystemId)) return;
+          if (isResetActive && !isAfterReset(t.createdAt || t.date)) return;
+          if (t.referenceId && refMap.has(t.referenceId) && refMap.get(t.referenceId) !== t.transactionId) {
+            return;
+          }
+          const monthMatch = t.description?.match(/(\d{4}-\d{2})/);
+          const monthKey = monthMatch ? monthMatch[1] : '';
+          const sig = `${t.type}|${t.memberSystemId || t.partyName?.trim().toLowerCase()}|${monthKey || t.date}|${t.credit}|${t.debit}`;
+          if (sigMap.has(sig) && sigMap.get(sig) !== t.transactionId) {
+            return;
+          }
+          map.set(t.transactionId, t);
+          if (t.referenceId) refMap.set(t.referenceId, t.transactionId);
+          sigMap.set(sig, t.transactionId);
+        });
         localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(Array.from(map.values())));
       }
+      this.synchronizeMemberBalances();
       this.reconcileTransactions();
     } catch (e) {
       console.warn('Error merging cloud data:', e);
@@ -470,6 +525,7 @@ export class StorageService {
   }
 
   // --- Members (Persistent Zero-Data-Loss Registry) ---
+  // --- Members (Persistent Zero-Data-Loss Registry) ---
   static getMembers(): Member[] {
     const raw = localStorage.getItem(STORAGE_KEYS.MEMBERS);
     let list: Member[] = [];
@@ -480,41 +536,7 @@ export class StorageService {
         list = [];
       }
     }
-    // Zero-Data-Loss guarantee: initialize official member records if local storage is blank
-    if (!list || list.length === 0) {
-      const today = new Date().toISOString().split('T')[0];
-      list = [
-        {
-          systemId: 'SYS-000001',
-          name: 'কাজল চন্দ্র দাস',
-          phone: '01319113970',
-          status: 'active',
-          currentBalance: 0,
-          createdAt: '2026-10-12',
-          updatedAt: today,
-        },
-        {
-          systemId: 'SYS-000002',
-          name: 'বিপ্লব চন্দ্র দাস',
-          phone: '01722-222222',
-          status: 'active',
-          currentBalance: 0,
-          createdAt: '2025-10-10',
-          updatedAt: today,
-        },
-        {
-          systemId: 'SYS-000003',
-          name: 'সুজন চন্দ্র দাস',
-          phone: '01733-333333',
-          status: 'active',
-          currentBalance: 0,
-          createdAt: '2025-10-10',
-          updatedAt: today,
-        },
-      ];
-      localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(list));
-    }
-    return list;
+    return Array.isArray(list) ? list : [];
   }
 
   static saveMembers(members: Member[]) {
@@ -548,6 +570,14 @@ export class StorageService {
     members.push(newMember);
     this.saveMembers(members);
 
+    // If previously marked deleted, remove from deleted ids
+    try {
+      const deletedKey = 'pakura_deleted_member_ids_v1';
+      const existingDeleted = JSON.parse(localStorage.getItem(deletedKey) || '[]');
+      const filtered = existingDeleted.filter((id: string) => id !== systemId);
+      localStorage.setItem(deletedKey, JSON.stringify(filtered));
+    } catch {}
+
     const user = currentUser || this.getCurrentUser();
     this.logActivity({
       userId: user.userId,
@@ -567,26 +597,71 @@ export class StorageService {
     const targetMember = members.find((m) => m.systemId === systemId);
     if (!targetMember) return this.getAppData();
 
+    // 1. Remove member from roster
     members = members.filter((m) => m.systemId !== systemId);
     this.saveMembers(members);
 
-    // Remove from Firestore
-    FirebaseSyncService.deleteMember(systemId).catch((err) => {
+    // 2. Track deleted ID so cloud sync won't resurrect it
+    try {
+      const deletedKey = 'pakura_deleted_member_ids_v1';
+      const existingDeleted = JSON.parse(localStorage.getItem(deletedKey) || '[]');
+      if (!existingDeleted.includes(systemId)) {
+        existingDeleted.push(systemId);
+        localStorage.setItem(deletedKey, JSON.stringify(existingDeleted));
+      }
+    } catch {}
+
+    // 3. Remove all contributions associated with this member
+    let contribs = this.getContributions();
+    contribs = contribs.filter((c) => c.memberSystemId !== systemId);
+    this.saveContributions(contribs);
+
+    // 4. Remove all receipts associated with this member
+    let receipts = this.getReceipts();
+    receipts = receipts.filter((r) => r.memberSystemId !== systemId);
+    this.saveReceipts(receipts);
+
+    // 5. Remove any member withdrawals associated with this member
+    let withdrawals = this.getMemberWithdrawals();
+    withdrawals = withdrawals.filter((w) => w.memberSystemId !== systemId);
+    this.saveMemberWithdrawals(withdrawals);
+
+    // 6. Remove any loans & loan payments associated with this member
+    let loans = this.getLoans();
+    const memberLoanIds = new Set(
+      loans
+        .filter((l) => l.borrowerId === systemId || l.borrowerName === targetMember.name)
+        .map((l) => l.loanId)
+    );
+    loans = loans.filter((l) => l.borrowerId !== systemId && l.borrowerName !== targetMember.name);
+    this.saveLoans(loans);
+
+    let loanPayments = this.getLoanPayments();
+    loanPayments = loanPayments.filter((p) => !memberLoanIds.has(p.loanId));
+    this.saveLoanPayments(loanPayments);
+
+    // 7. Remove any user login accounts mapped to this member (except Main Admin)
+    const users = this.getUsers().filter((u) => {
+      if (u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() || u.isMainAdmin) return true;
+      if (u.memberSystemId === systemId) return false;
+      const uPhone = normalizePhoneNumber(u.username || u.phone || '');
+      const mPhone = normalizePhoneNumber(targetMember.phone || '');
+      if (mPhone && uPhone === mPhone) {
+        // Only delete if no other remaining member uses this phone
+        const otherMemberWithPhone = members.some((om) => normalizePhoneNumber(om.phone) === mPhone);
+        return otherMemberWithPhone;
+      }
+      return true;
+    });
+    this.saveUsers(users);
+
+    // 8. Reconcile transactions
+    this.reconcileTransactions();
+
+    // 9. Remove from Firestore completely in background
+    FirebaseSyncService.deleteMemberAndAllAssociatedData(systemId, targetMember.phone).catch((err) => {
       console.warn('Firestore member delete notice:', err);
     });
-
-    // Unlink any user accounts that were mapped to this memberSystemId
-    const users = this.getUsers();
-    let usersUpdated = false;
-    users.forEach((u) => {
-      if (u.memberSystemId === systemId) {
-        u.memberSystemId = undefined;
-        usersUpdated = true;
-      }
-    });
-    if (usersUpdated) {
-      this.saveUsers(users);
-    }
 
     const user = currentUser || this.getCurrentUser();
     this.logActivity({
@@ -596,7 +671,7 @@ export class StorageService {
       action: 'DELETE_MEMBER',
       module: 'Members',
       referenceId: systemId,
-      description: `সদস্য মুছে ফেলা হয়েছে: ${targetMember.name} (${targetMember.phone || systemId})`,
+      description: `সদস্য ও সংশ্লিষ্ট সমস্ত ডাটা স্থায়ীভাবে মুছে ফেলা হয়েছে: ${targetMember.name} (${targetMember.phone || systemId})`,
     });
 
     return this.getAppData();
@@ -617,7 +692,7 @@ export class StorageService {
     const userUname = (user.username || '').trim().toLowerCase();
     const userUid = (user.userId || '').trim();
 
-    // 1. Direct matching by member systemId, username, or userId
+    // 1. Direct matching by member systemId, username, userId, or matching phone number
     const matched = members.filter((m) => {
       const mSysId = (m.systemId || '').trim().toLowerCase();
       const mNormPhone = normalizePhoneNumber(m.phone || '');
@@ -627,7 +702,7 @@ export class StorageService {
         return true;
       }
 
-      // Username directly matching system ID (e.g. user entered SYS-000001)
+      // Username directly matching system ID
       if (userUname && mSysId === userUname) {
         return true;
       }
@@ -637,19 +712,7 @@ export class StorageService {
         return true;
       }
 
-      // SYS-000001 special resolution (Kajol's member account)
-      if (
-        mSysId === 'sys-000001' &&
-        (userSysId === 'sys-000001' ||
-          userUname === 'sys-000001' ||
-          userUid.includes('SYS-000001') ||
-          (effectivePhone && effectivePhone === '01319113970') ||
-          user.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase())
-      ) {
-        return true;
-      }
-
-      // Genuine Phone number match (only when effectivePhone is a real phone number with at least 10 digits)
+      // Genuine Phone number match (matches ALL member profiles sharing this phone number: 1, 2, 3, 4+ entries)
       if (effectivePhone && effectivePhone.length >= 10 && mNormPhone && mNormPhone.length >= 10) {
         if (
           mNormPhone === effectivePhone ||
@@ -673,35 +736,6 @@ export class StorageService {
     if (userUname && (userUname.startsWith('sys') || userUname.startsWith('mem'))) {
       const byUname = members.find((m) => (m.systemId || '').toLowerCase() === userUname);
       if (byUname) return [byUname];
-    }
-    if (user.role === 'admin' && (user.isMainAdmin || user.email === MAIN_ADMIN_EMAIL)) {
-      const kajol = members.find((m) => m.systemId === 'SYS-000001');
-      if (kajol) return [kajol];
-    }
-
-    // Never return a zeroed profile if real member or contributions exist
-    if (user.role === 'member') {
-      const allContributions = this.getContributions();
-      const myContribs = allContributions.filter(
-        (c) =>
-          c.memberSystemId === user.memberSystemId ||
-          (effectivePhone && normalizePhoneNumber(c.recordedBy || '') === effectivePhone)
-      );
-      const netPaid = myContribs.reduce((s, c) => s + (c.amount || 0), 0);
-
-      return [
-        {
-          systemId: user.memberSystemId || `MEM-${user.userId.replace(/\D/g, '') || '000001'}`,
-          name: user.name || user.displayName || 'সম্মানিত সদস্য',
-          phone: user.phone || user.username || '',
-          status: 'active',
-          currentBalance: Math.max(100, netPaid),
-          profitShareBalance: 0,
-          totalWithdrawn: 0,
-          createdAt: user.createdAt || new Date().toISOString().split('T')[0],
-          updatedAt: new Date().toISOString().split('T')[0],
-        },
-      ];
     }
 
     return [];
@@ -788,103 +822,7 @@ export class StorageService {
   }
 
   static loadSampleMembers(currentUser?: UserAccount): FullAppData {
-    const existing = this.getMembers();
-    if (existing.length === 0) {
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      const today = new Date().toISOString().split('T')[0];
-
-      // Multi-account example as specified by user:
-      // Kajol Das has two accounts linked to the same phone number (01711-111111) with 100 in each = total 200!
-      const samples: Member[] = [
-        {
-          systemId: 'SYS-000001',
-          name: 'কাজল চন্দ্র দাস (হিসাব ১)',
-          phone: '01711-111111',
-          status: 'active',
-          currentBalance: 100, // ৳100 in Account 1
-          createdAt: '2025-10-10',
-          updatedAt: today,
-        },
-        {
-          systemId: 'SYS-000002',
-          name: 'কাজল চন্দ্র দাস (হিসাব ২)',
-          phone: '01711-111111',
-          status: 'active',
-          currentBalance: 100, // ৳100 in Account 2 -> Total combined = ৳200
-          createdAt: '2025-10-10',
-          updatedAt: today,
-        },
-        {
-          systemId: 'SYS-000003',
-          name: 'বিপ্লব চন্দ্র দাস',
-          phone: '01722-222222',
-          status: 'active',
-          currentBalance: 100,
-          createdAt: '2025-10-10',
-          updatedAt: today,
-        },
-        {
-          systemId: 'SYS-000004',
-          name: 'সুজন চন্দ্র দাস',
-          phone: '01733-333333',
-          status: 'active',
-          currentBalance: 100,
-          createdAt: '2025-10-10',
-          updatedAt: today,
-        },
-      ];
-      this.saveMembers(samples);
-
-      // Create matching contributions and bank ledger transactions for these initial funds
-      const contributions = this.getContributions();
-      const transactions = this.getTransactions();
-
-      samples.forEach((sample, i) => {
-        const conId = `CON-${String(i + 1).padStart(6, '0')}`;
-        const recId = `REC-${String(i + 1).padStart(6, '0')}`;
-
-        if (!contributions.some((c) => c.memberSystemId === sample.systemId)) {
-          contributions.push({
-            contributionId: conId,
-            memberSystemId: sample.systemId,
-            memberName: sample.name,
-            amount: 100,
-            contributionDate: today,
-            month: currentMonth,
-            paymentMethod: 'bank',
-            receiptId: recId,
-            recordedBy: 'সিস্টেম অ্যাডমিন',
-            createdAt: new Date().toISOString(),
-            status: 'paid',
-            contributionType: 'regular',
-            notes: 'মাসিক সঞ্চয় জমা (ব্যাংক মারফত)',
-          });
-
-          this.createReceipt({
-            receiptId: recId,
-            transactionId: conId,
-            name: sample.name,
-            phone: sample.phone,
-            amount: 100,
-            purpose: `মাসিক সঞ্চয় - ${currentMonth}`,
-            date: today,
-            receivedBy: 'কোষাধ্যক্ষ',
-            paymentMethod: 'bank',
-          });
-        }
-      });
-      this.saveContributions(contributions);
-
-      const user = currentUser || this.getCurrentUser();
-      this.logActivity({
-        userId: user.userId,
-        userDisplayName: user.displayName,
-        role: user.role,
-        action: 'ADD_MEMBER',
-        module: 'Members',
-        description: 'বহু-অ্যাকাউন্ট পরীক্ষামূলক সদস্য তালিকা লোড করা হয়েছে (কাজল চন্দ্র দাসের ২টি অ্যাকাউন্টে ১০০+১০০=২০০ টাকা)',
-      });
-    }
+    // Disabled as requested: no automatic sample data creation
     return this.getAppData();
   }
 
@@ -1331,7 +1269,7 @@ export class StorageService {
         userId: 'USR-MAIN-ADMIN',
         username: 'kajol_admin',
         email: MAIN_ADMIN_EMAIL,
-        name: 'কাজল চন্দ্র দাস',
+        name: 'Kajol Chandra Das',
         displayName: 'কাজল চন্দ্র দাস (প্রধান অ্যাডমিন)',
         role: 'admin',
         isMainAdmin: true,
@@ -1809,55 +1747,15 @@ export class StorageService {
         list = [];
       }
     }
-    if (!list || list.length === 0) {
-      const members = this.getMembers();
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      const today = new Date().toISOString().split('T')[0];
-      list = members.map((m, i) => ({
-        contributionId: `CON-${String(i + 1).padStart(6, '0')}`,
-        memberSystemId: m.systemId,
-        memberName: m.name,
-        amount: m.currentBalance || 100,
-        contributionDate: today,
-        month: currentMonth,
-        paymentMethod: 'bank' as const,
-        receiptId: `RCT-${String(i + 1).padStart(6, '0')}`,
-        recordedBy: 'সিস্টেম অ্যাডমিন',
-        createdAt: new Date().toISOString(),
-        status: 'paid' as const,
-        contributionType: 'regular' as const,
-        notes: 'মাসিক সঞ্চয় জমা (প্রারম্ভিক স্থিতি)',
-      }));
+    if (!Array.isArray(list)) return [];
+
+    // Strictly clean: remove any legacy auto-generated contributions
+    const cleanList = list.filter(
+      (c) => c && c.notes !== 'মাসিক সঞ্চয় জমা (প্রারম্ভিক স্থিতি)' && !c.contributionId?.startsWith('CON-KJL-')
+    );
+    if (cleanList.length !== list.length) {
+      list = cleanList;
       localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(list));
-    } else {
-      // Automatic Deduplication & Unique Key Guarantee
-      const seenIds = new Set<string>();
-      let hasDuplicates = false;
-      let maxNum = 0;
-      for (const c of list) {
-        const num = parseInt((c.contributionId || '').replace(/\D/g, ''), 10);
-        if (!isNaN(num) && num > maxNum) maxNum = num;
-      }
-
-      const cleanList: Contribution[] = [];
-      for (const c of list) {
-        if (!c.contributionId || seenIds.has(c.contributionId)) {
-          hasDuplicates = true;
-          maxNum++;
-          cleanList.push({
-            ...c,
-            contributionId: `CON-${String(maxNum).padStart(6, '0')}`,
-          });
-        } else {
-          seenIds.add(c.contributionId);
-          cleanList.push(c);
-        }
-      }
-
-      if (hasDuplicates) {
-        list = cleanList;
-        localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(list));
-      }
     }
     return list;
   }
@@ -1942,33 +1840,23 @@ export class StorageService {
       type: 'contribution',
     });
 
-    // Create Master Ledger Transaction for monthly savings capital
+    // Strictly ONE Master Ledger Transaction per received payment (no duplicate or split TRX entries)
+    const totalCreditAmount = effectiveAmount + effectiveLateFee;
+    const trxDescription = effectiveLateFee > 0
+      ? `${typeLabel} জমা (৳${effectiveAmount}) + বিলম্ব ফি (৳${effectiveLateFee}) (${month}) - ${member.name.trim()}`
+      : `${typeLabel} জমা (${month}) - ${member.name.trim()}`;
+
     this.createTransaction({
       type: 'contribution',
       referenceId: contributionId,
       memberSystemId,
-      partyName: member.name,
-      description: `${typeLabel} জমা (${month}) - ${member.name}`,
+      partyName: member.name.trim(),
+      description: trxDescription,
       debit: 0,
-      credit: effectiveAmount,
+      credit: totalCreditAmount,
       paymentMethod,
       createdBy: currentUser.displayName,
     });
-
-    // Add late fee to total loan profit / income as specified: "This late fee will be added to the total loan profit."
-    if (effectiveLateFee > 0) {
-      this.createTransaction({
-        type: 'income',
-        referenceId: `LF-${contributionId}`,
-        memberSystemId,
-        partyName: member.name,
-        description: `মাসিক সঞ্চয়ের বিলম্ব ফি (Late Fee) - ${member.name} (${month}) [ঋণের লভ্যাংশে অন্তর্ভুক্ত]`,
-        debit: 0,
-        credit: effectiveLateFee,
-        paymentMethod,
-        createdBy: currentUser.displayName,
-      });
-    }
 
     this.logActivity({
       userId: currentUser.userId,
@@ -2535,16 +2423,114 @@ export class StorageService {
       const withdrawals = data ? (data.memberWithdrawals || []) : this.getMemberWithdrawals();
       const settings = data ? data.settings : this.getSettings();
 
-      const existingRefIds = new Set<string>();
-      list.forEach((t) => {
-        if (t.referenceId) existingRefIds.add(t.referenceId);
-      });
-
       let hasChanges = false;
 
-      // 1. Reconcile Member Contributions
+      // Clean up and merge any split LF- transactions into their parent contribution transaction
+      const lfTxs = list.filter((t) => t.referenceId?.startsWith('LF-') || t.description?.includes('বিলম্ব ফি (Late Fee)'));
+      if (lfTxs.length > 0) {
+        for (const lf of lfTxs) {
+          const parentRef = lf.referenceId?.replace('LF-', '') || '';
+          const parentTrx = list.find((t) => t.referenceId === parentRef || (parentRef && t.transactionId?.includes(parentRef)));
+          if (parentTrx) {
+            const matchCon = contributions.find((c) => c.contributionId === parentRef);
+            if (matchCon) {
+              parentTrx.credit = (matchCon.amount || 0) + (matchCon.lateFee || 0);
+              if ((matchCon.lateFee || 0) > 0 && !parentTrx.description.includes('বিলম্ব ফি')) {
+                parentTrx.description = `মাসিক সঞ্চয় জমা (৳${matchCon.amount}) + বিলম্ব ফি (৳${matchCon.lateFee}) (${matchCon.month}) - ${matchCon.memberName}`;
+              }
+            } else {
+              parentTrx.credit += (lf.credit || 0);
+            }
+          }
+        }
+        // Purge the split LF transactions (e.g. TRX-000002) so only 1 transaction remains per received item
+        list = list.filter((t) => !t.referenceId?.startsWith('LF-') && !t.description?.includes('বিলম্ব ফি (Late Fee)'));
+        hasChanges = true;
+      }
+
+      // Comprehensive deduplication of transactions:
+      // Remove duplicate entries where the same financial event was recorded twice
+      // (e.g. one with TRX-000001 and one with TRX-C-CON-000001)
+      const seenTxIds = new Set<string>();
+      const seenRefIds = new Set<string>();
+      const seenSignatures = new Set<string>();
+      const cleanList: Transaction[] = [];
+
+      // Sort so that standard sequential TRX-000... IDs take priority over synthetic TRX-C- prefixes
+      list.sort((a, b) => {
+        const aIsSynthetic = a.transactionId?.includes('-C-') || a.transactionId?.includes('-P-') || a.transactionId?.includes('-L-') || a.transactionId?.includes('-I-') || a.transactionId?.includes('-E-') || a.transactionId?.includes('-W-');
+        const bIsSynthetic = b.transactionId?.includes('-C-') || b.transactionId?.includes('-P-') || b.transactionId?.includes('-L-') || b.transactionId?.includes('-I-') || b.transactionId?.includes('-E-') || b.transactionId?.includes('-W-');
+        if (aIsSynthetic !== bIsSynthetic) return aIsSynthetic ? 1 : -1;
+        return (a.transactionId || '').localeCompare(b.transactionId || '');
+      });
+
+      for (const t of list) {
+        if (!t || !t.transactionId) continue;
+        
+        // 1. Check exact transactionId
+        if (seenTxIds.has(t.transactionId)) {
+          hasChanges = true;
+          continue;
+        }
+
+        // 2. Check referenceId
+        const ref = t.referenceId || t.transactionId.replace(/^TRX-[CPLIEW]-/, '');
+        if (ref && seenRefIds.has(ref)) {
+          hasChanges = true;
+          continue;
+        }
+
+        // 3. Check exact financial signature (e.g. same member, same month, same type, same credit/debit)
+        const monthMatch = t.description?.match(/(\d{4}-\d{2})/);
+        const monthKey = monthMatch ? monthMatch[1] : '';
+        const sig = `${t.type}|${t.memberSystemId || t.partyName?.trim().toLowerCase()}|${monthKey || t.date}|${t.credit}|${t.debit}`;
+        
+        if (seenSignatures.has(sig)) {
+          hasChanges = true;
+          continue;
+        }
+
+        seenTxIds.add(t.transactionId);
+        if (ref) seenRefIds.add(ref);
+        if (t.referenceId) seenRefIds.add(t.referenceId);
+        seenSignatures.add(sig);
+        cleanList.push(t);
+      }
+      list = cleanList;
+
+      const existingRefIds = new Set<string>();
+      const existingSignatures = new Set<string>();
+      list.forEach((t) => {
+        if (t.referenceId) existingRefIds.add(t.referenceId);
+        const ref = t.transactionId?.replace(/^TRX-[CPLIEW]-/, '');
+        if (ref) existingRefIds.add(ref);
+        const monthMatch = t.description?.match(/(\d{4}-\d{2})/);
+        const monthKey = monthMatch ? monthMatch[1] : '';
+        const sig = `${t.type}|${t.memberSystemId || t.partyName?.trim().toLowerCase()}|${monthKey || t.date}|${t.credit}|${t.debit}`;
+        existingSignatures.add(sig);
+      });
+
+      // 1. Reconcile Member Contributions (strictly ONE consolidated transaction per contribution)
       for (const c of contributions) {
-        if (c.status === 'paid' && c.contributionId && !existingRefIds.has(c.contributionId)) {
+        const totalAmt = (c.amount || 0) + (c.lateFee || 0);
+        const sig = `contribution|${c.memberSystemId || c.memberName?.trim().toLowerCase()}|${c.month || c.contributionDate}|${totalAmt}|0`;
+        const alreadyExists =
+          existingRefIds.has(c.contributionId) ||
+          existingSignatures.has(sig) ||
+          list.some(
+            (t) =>
+              t.referenceId === c.contributionId ||
+              t.transactionId === `TRX-C-${c.contributionId}` ||
+              (t.type === 'contribution' &&
+                (t.memberSystemId === c.memberSystemId || t.partyName?.trim().toLowerCase() === c.memberName?.trim().toLowerCase()) &&
+                t.description?.includes(c.month))
+          );
+
+        if (c.status === 'paid' && c.contributionId && !alreadyExists) {
+          const desc = (c.lateFee || 0) > 0
+            ? `মাসিক সঞ্চয় জমা (৳${c.amount}) + বিলম্ব ফি (৳${c.lateFee}) (${c.month}) - ${c.memberName}`
+            : `মাসিক সঞ্চয় জমা (${c.month}) - ${c.memberName}`;
+
           list.push({
             transactionId: `TRX-C-${c.contributionId}`,
             date: c.contributionDate || new Date().toISOString().split('T')[0],
@@ -2552,9 +2538,9 @@ export class StorageService {
             referenceId: c.contributionId,
             memberSystemId: c.memberSystemId,
             partyName: c.memberName,
-            description: `মাসিক সঞ্চয় জমা (${c.month}) - ${c.memberName}`,
+            description: desc,
             debit: 0,
-            credit: c.amount || 0,
+            credit: totalAmt,
             balanceAfter: 0,
             paymentMethod: c.paymentMethod || 'cash',
             createdBy: c.recordedBy || 'System',
@@ -2562,76 +2548,25 @@ export class StorageService {
             status: 'active',
           });
           existingRefIds.add(c.contributionId);
-          hasChanges = true;
-        }
-
-        // Reconcile Late Fees from contributions
-        if ((c.lateFee || 0) > 0 && !existingRefIds.has(`LF-${c.contributionId}`)) {
-          list.push({
-            transactionId: `TRX-LF-${c.contributionId}`,
-            date: c.contributionDate || new Date().toISOString().split('T')[0],
-            type: 'income',
-            referenceId: `LF-${c.contributionId}`,
-            memberSystemId: c.memberSystemId,
-            partyName: c.memberName,
-            description: `মাসিক সঞ্চয়ের বিলম্ব ফি (Late Fee) - ${c.memberName} (${c.month})`,
-            debit: 0,
-            credit: c.lateFee || 0,
-            balanceAfter: 0,
-            paymentMethod: c.paymentMethod || 'cash',
-            createdBy: c.recordedBy || 'System',
-            createdAt: c.createdAt || new Date().toISOString(),
-            status: 'active',
-          });
-          existingRefIds.add(`LF-${c.contributionId}`);
+          existingSignatures.add(sig);
           hasChanges = true;
         }
       }
 
-      // 2. Reconcile Member Capital / Opening Balance:
-      // If a member has currentBalance > sum of their recorded contributions,
-      // the remaining capital represents member savings deposited into the society's treasury.
-      for (const m of members) {
-        const memberContribs = contributions
-          .filter((c) => c.memberSystemId === m.systemId && c.status === 'paid')
-          .reduce((sum, c) => sum + (c.amount || 0), 0);
-        const memberWithdraws = withdrawals
-          .filter(
-            (w) =>
-              w.memberSystemId === m.systemId &&
-              w.status === 'completed' &&
-              (w.source === 'savings' || w.source === 'combined' || !w.source)
-          )
-          .reduce((sum, w) => sum + (w.amount || 0), 0);
-
-        const unrecordedCapital = (m.currentBalance || 0) - (memberContribs - memberWithdraws);
-        const capRefId = `CAP-${m.systemId}`;
-
-        if (unrecordedCapital > 0 && !existingRefIds.has(capRefId)) {
-          list.push({
-            transactionId: `TRX-${capRefId}`,
-            date: m.createdAt || new Date().toISOString().split('T')[0],
-            type: 'contribution',
-            referenceId: capRefId,
-            memberSystemId: m.systemId,
-            partyName: m.name,
-            description: `সদস্য মূলধন সঞ্চয় জমা (Member Capital Deposit) - ${m.name}`,
-            debit: 0,
-            credit: unrecordedCapital,
-            balanceAfter: 0,
-            paymentMethod: 'cash',
-            createdBy: 'System / মূলধন সঞ্চয়',
-            createdAt: m.createdAt || new Date().toISOString(),
-            status: 'active',
-          });
-          existingRefIds.add(capRefId);
-          hasChanges = true;
-        }
+      // 2. Clean up legacy or redundant TRX-CAP- transactions
+      const prevLength = list.length;
+      list = list.filter((t) => !t.transactionId?.startsWith('TRX-CAP-') && !t.referenceId?.startsWith('CAP-'));
+      if (list.length !== prevLength) {
+        hasChanges = true;
       }
 
       // 3. Reconcile Loans (Disbursements)
       for (const l of loans) {
-        if (l.loanId && !existingRefIds.has(l.loanId)) {
+        const alreadyExists =
+          existingRefIds.has(l.loanId) ||
+          list.some((t) => t.referenceId === l.loanId || t.transactionId === `TRX-L-${l.loanId}`);
+
+        if (l.loanId && !alreadyExists) {
           list.push({
             transactionId: `TRX-L-${l.loanId}`,
             date: l.loanDate || new Date().toISOString().split('T')[0],
@@ -2655,7 +2590,11 @@ export class StorageService {
 
       // 4. Reconcile Loan Payments (Collections)
       for (const p of loanPayments) {
-        if (p.paymentId && !existingRefIds.has(p.paymentId)) {
+        const alreadyExists =
+          existingRefIds.has(p.paymentId) ||
+          list.some((t) => t.referenceId === p.paymentId || t.transactionId === `TRX-P-${p.paymentId}`);
+
+        if (p.paymentId && !alreadyExists) {
           list.push({
             transactionId: `TRX-P-${p.paymentId}`,
             date: p.paymentDate || new Date().toISOString().split('T')[0],
@@ -2678,7 +2617,11 @@ export class StorageService {
 
       // 5. Reconcile Income Records
       for (const i of incomes) {
-        if (i.incomeId && !existingRefIds.has(i.incomeId)) {
+        const alreadyExists =
+          existingRefIds.has(i.incomeId) ||
+          list.some((t) => t.referenceId === i.incomeId || t.transactionId === `TRX-I-${i.incomeId}`);
+
+        if (i.incomeId && !alreadyExists) {
           list.push({
             transactionId: `TRX-I-${i.incomeId}`,
             date: i.date || new Date().toISOString().split('T')[0],
@@ -2701,7 +2644,11 @@ export class StorageService {
 
       // 6. Reconcile Expense Records
       for (const e of expenses) {
-        if (e.expenseId && !existingRefIds.has(e.expenseId)) {
+        const alreadyExists =
+          existingRefIds.has(e.expenseId) ||
+          list.some((t) => t.referenceId === e.expenseId || t.transactionId === `TRX-E-${e.expenseId}`);
+
+        if (e.expenseId && !alreadyExists) {
           list.push({
             transactionId: `TRX-E-${e.expenseId}`,
             date: e.date || new Date().toISOString().split('T')[0],
@@ -2724,7 +2671,11 @@ export class StorageService {
 
       // 7. Reconcile Member Withdrawals
       for (const w of withdrawals) {
-        if (w.status === 'completed' && w.withdrawalId && !existingRefIds.has(w.withdrawalId)) {
+        const alreadyExists =
+          existingRefIds.has(w.withdrawalId) ||
+          list.some((t) => t.referenceId === w.withdrawalId || t.transactionId === `TRX-W-${w.withdrawalId}`);
+
+        if (w.status === 'completed' && w.withdrawalId && !alreadyExists) {
           list.push({
             transactionId: `TRX-W-${w.withdrawalId}`,
             date: w.date || new Date().toISOString().split('T')[0],
@@ -2798,6 +2749,46 @@ export class StorageService {
     createdBy: string;
   }): Transaction {
     const list = this.getTransactions();
+
+    // Check if a transaction for this referenceId or financial signature already exists
+    const monthMatch = data.description?.match(/(\d{4}-\d{2})/);
+    const monthKey = monthMatch ? monthMatch[1] : '';
+
+    const existingIndex = list.findIndex(
+      (t) =>
+        (data.referenceId && t.referenceId === data.referenceId) ||
+        (data.referenceId && t.transactionId === `TRX-C-${data.referenceId}`) ||
+        (data.referenceId && t.transactionId === `TRX-P-${data.referenceId}`) ||
+        (data.referenceId && t.transactionId === `TRX-L-${data.referenceId}`) ||
+        (data.referenceId && t.transactionId === `TRX-I-${data.referenceId}`) ||
+        (data.referenceId && t.transactionId === `TRX-E-${data.referenceId}`) ||
+        (data.referenceId && t.transactionId === `TRX-W-${data.referenceId}`) ||
+        (data.memberSystemId &&
+          t.memberSystemId === data.memberSystemId &&
+          t.type === data.type &&
+          monthKey &&
+          t.description?.includes(monthKey))
+    );
+
+    if (existingIndex >= 0) {
+      // Update in place rather than creating duplicate
+      list[existingIndex] = {
+        ...list[existingIndex],
+        type: data.type,
+        referenceId: data.referenceId || list[existingIndex].referenceId,
+        memberSystemId: data.memberSystemId || list[existingIndex].memberSystemId,
+        borrowerId: data.borrowerId || list[existingIndex].borrowerId,
+        partyName: data.partyName || list[existingIndex].partyName,
+        description: data.description || list[existingIndex].description,
+        debit: data.debit,
+        credit: data.credit,
+        paymentMethod: data.paymentMethod,
+        createdBy: data.createdBy,
+      };
+      this.saveTransactions(list);
+      return list[existingIndex];
+    }
+
     const existing = new Set(list.map((t) => t.transactionId));
     let count = list.length + 1;
     let nextId = `TRX-${String(count).padStart(6, '0')}`;
@@ -2895,32 +2886,52 @@ export class StorageService {
   static getReceipts(): Receipt[] {
     const raw = localStorage.getItem(STORAGE_KEYS.RECEIPTS);
     let list: Receipt[] = [];
+    let hasChanges = false;
+
     if (raw) {
       try {
         const parsed: Receipt[] = JSON.parse(raw);
-        const seen = new Set<string>();
-        list = parsed.map((r, idx) => {
-          if (!r.receiptId || seen.has(r.receiptId)) {
-            let counter = idx + 1;
-            let uniqueId = `RCT-${String(counter).padStart(6, '0')}`;
-            while (seen.has(uniqueId)) {
-              counter++;
-              uniqueId = `RCT-${String(counter).padStart(6, '0')}`;
+        if (Array.isArray(parsed)) {
+          const seenReceiptIds = new Set<string>();
+          const seenTxnIds = new Set<string>();
+
+          for (const r of parsed) {
+            if (!r || !r.receiptId) continue;
+            // Deduplicate: If another receipt with same receiptId exists, discard duplicate
+            if (seenReceiptIds.has(r.receiptId)) {
+              hasChanges = true;
+              continue;
             }
-            seen.add(uniqueId);
-            return { ...r, receiptId: uniqueId };
+            // Deduplicate: If another receipt with same non-empty transactionId exists, discard duplicate
+            if (r.transactionId && seenTxnIds.has(r.transactionId)) {
+              hasChanges = true;
+              continue;
+            }
+            seenReceiptIds.add(r.receiptId);
+            if (r.transactionId) seenTxnIds.add(r.transactionId);
+            list.push(r);
           }
-          seen.add(r.receiptId);
-          return r;
-        });
+        }
       } catch {
         list = [];
       }
     }
 
-    const existingReceiptIds = new Set(list.map((r) => r.receiptId));
+    const existingReceiptIds = new Set(list.map((r) => r.receiptId).filter(Boolean));
     const existingTxnIds = new Set(list.map((r) => r.transactionId).filter(Boolean));
-    let hasChanges = false;
+
+    // Purge legacy auto-generated receipts
+    const initialLen = list.length;
+    list = list.filter(
+      (r) =>
+        r &&
+        !r.receiptId?.startsWith('RCT-KJL-') &&
+        !r.transactionId?.startsWith('CON-KJL-') &&
+        !r.purpose?.includes('প্রারম্ভিক স্থিতি')
+    );
+    if (list.length !== initialLen) {
+      hasChanges = true;
+    }
 
     // Cross-reference with contributions: make sure every contribution has an official receipt
     const rawCon = localStorage.getItem(STORAGE_KEYS.CONTRIBUTIONS);
@@ -2933,7 +2944,11 @@ export class StorageService {
 
         for (const c of contributions) {
           const recId = c.receiptId || `RCT-${c.contributionId.replace(/\D/g, '').padStart(6, '0')}`;
-          const existingReceipt = list.find((r) => r.receiptId === recId || (r.transactionId && r.transactionId === c.contributionId));
+          const existingReceipt = list.find((r) =>
+            (r.receiptId && r.receiptId === recId) ||
+            (c.receiptId && r.receiptId === c.receiptId) ||
+            (r.transactionId && c.contributionId && r.transactionId === c.contributionId)
+          );
           const m = memberMap.get(c.memberSystemId);
           const totalAmt = (c.amount || 0) + (c.lateFee || 0);
 
@@ -2981,7 +2996,11 @@ export class StorageService {
         const withdrawals: MemberWithdrawal[] = JSON.parse(rawWith);
         for (const w of withdrawals) {
           const recId = w.receiptId || `RCT-${w.withdrawalId.replace(/\D/g, '').padStart(6, '0')}`;
-          const existingReceipt = list.find((r) => r.receiptId === recId || (r.transactionId && r.transactionId === w.withdrawalId));
+          const existingReceipt = list.find((r) =>
+            (r.receiptId && r.receiptId === recId) ||
+            (w.receiptId && r.receiptId === w.receiptId) ||
+            (r.transactionId && w.withdrawalId && r.transactionId === w.withdrawalId)
+          );
           if (!existingReceipt) {
             list.push({
               receiptId: recId,
@@ -3029,7 +3048,11 @@ export class StorageService {
 
         for (const p of payments) {
           const recId = p.receiptId || `RCT-${p.paymentId.replace(/\D/g, '').padStart(6, '0')}`;
-          const existingReceipt = list.find((r) => r.receiptId === recId || (r.transactionId && r.transactionId === p.paymentId));
+          const existingReceipt = list.find((r) =>
+            (r.receiptId && r.receiptId === recId) ||
+            (p.receiptId && r.receiptId === p.receiptId) ||
+            (r.transactionId && p.paymentId && r.transactionId === p.paymentId)
+          );
           // Attempt to match borrower with a member record for system ID and phone
           const m = members.find((x) => x.name.trim() === p.borrowerName.trim());
 
@@ -3078,13 +3101,26 @@ export class StorageService {
 
   static createReceipt(data: Omit<Receipt, 'createdAt'>): Receipt {
     const receipts = this.getReceipts();
+    const existingIndex = receipts.findIndex(
+      (r) =>
+        (data.receiptId && r.receiptId === data.receiptId) ||
+        (data.transactionId && r.transactionId && r.transactionId === data.transactionId)
+    );
+
     const newReceipt: Receipt = {
       ...data,
-      createdAt: new Date().toISOString(),
+      createdAt: (data as any).createdAt || new Date().toISOString(),
     };
-    receipts.unshift(newReceipt);
-    this.saveReceipts(receipts);
-    return newReceipt;
+
+    if (existingIndex >= 0) {
+      receipts[existingIndex] = { ...receipts[existingIndex], ...newReceipt };
+      this.saveReceipts(receipts);
+      return receipts[existingIndex];
+    } else {
+      receipts.unshift(newReceipt);
+      this.saveReceipts(receipts);
+      return newReceipt;
+    }
   }
 
   // --- Activity Log ---
@@ -3433,33 +3469,27 @@ export class StorageService {
     const expenseRecords = data ? (data.expenseRecords || data.expenses || []) : this.getExpenseRecords();
     const totalExpense = expenseRecords.reduce((sum, e) => sum + (e.amount || 0), 0);
 
-    // Cash and Bank Balances derived from all active reconciled transactions
+    // Cash and Bank Balances derived from transactions & authoritative financial ledger equation
     const settings = data ? data.settings : this.getSettings();
-    let cashBalance = settings.cashOpeningBalance || 0;
     let bankBalance = settings.bankOpeningBalance || 0;
 
     const transactions = this.reconcileTransactions(data);
-    // Sort oldest to newest to compute running balance
-    const sorted = [...transactions].reverse();
-    for (const trx of sorted) {
+    for (const trx of transactions) {
       if (trx.status === 'reversed') continue;
       const net = (trx.credit || 0) - (trx.debit || 0);
       if (trx.paymentMethod === 'bank') {
         bankBalance += net;
-      } else {
-        cashBalance += net;
       }
     }
+    bankBalance = Math.max(0, bankBalance);
 
-    // Direct Cash Balance safeguard:
-    // Every Taka in Total Member Capital was deposited in cash (unless bank).
-    // If cashBalance is 0 or less, but totalMemberCapital > 0 and uncommitted (not lent out as loans or spent),
-    // ensure Cash Balance reflects the actual available funds in hand:
+    // Exact Zero-Discrepancy Formula:
+    // Cash Balance in treasury must align 100% with:
+    // (Total Member  Balance  + Total Income + Cash Opening) - (Money Outside/Loans + Bank Balance + Total Expense)
+    // Zero discrepancy, zero excess, zero shortfall.
     const totalCommitted = moneyOutside + bankBalance + totalExpense;
     const totalAvailableInflow = totalMemberCapital + totalIncome + (settings.cashOpeningBalance || 0);
-    if (cashBalance <= 0 && totalAvailableInflow > totalCommitted) {
-      cashBalance = Math.max(0, totalAvailableInflow - totalCommitted);
-    }
+    const cashBalance = Math.max(0, totalAvailableInflow - totalCommitted);
 
     return {
       totalMembers: members.length,
@@ -3474,43 +3504,9 @@ export class StorageService {
     };
   }
 
-  // --- Reset Demo / Financial Data to ৳0 as mandated in blueprint ---
-  static resetFinancialDataToZero(currentUser: UserAccount) {
-    // Reset ALL members currentBalance, profitShareBalance, and totalWithdrawn to 0
-    const rawMembers = this.getMembers();
-    const members = rawMembers.map((m) => ({
-      ...m,
-      currentBalance: 0,
-      profitShareBalance: 0,
-      totalWithdrawn: 0,
-    }));
-    this.saveMembers(members);
-
-    // Clear all financial records
-    this.saveContributions([]);
-    this.saveLoans([]);
-    this.saveBorrowers([]);
-    this.saveLoanPayments([]);
-    this.saveIncomeRecords([]);
-    this.saveExpenseRecords([]);
-    this.saveTransactions([]);
-    this.saveReceipts([]);
-    this.saveProfitDistributions([]);
-    this.saveMemberWithdrawals([]);
-
-    // Clear and sync in background to Firestore
-    FirebaseSyncService.resetFinancialDataInFirestore(members).catch((err) => {
-      console.warn('Firestore financial reset notice:', err);
-    });
-
-    this.logActivity({
-      userId: currentUser.userId,
-      userDisplayName: currentUser.displayName,
-      role: currentUser.role,
-      action: 'RESET_FINANCIAL_DATA',
-      module: 'System',
-      description: 'আর্থিক ডাটাবেজ ও সকল সদস্যের ব্যক্তিগত সঞ্চয় ও ব্যালেন্স ৳০-তে রিসেট করা হয়েছে',
-    });
+  // --- Reset Database / Financial Data to ৳0 as mandated by user ---
+  static resetFinancialDataToZero(currentUser?: UserAccount) {
+    this.resetToInitialDatabase();
   }
 
   // --- User Preferences ---
@@ -3540,13 +3536,16 @@ export class StorageService {
             u.role === 'admin' &&
             (u.isMainAdmin === true ||
               u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-              u.userId === 'USR-000001')
+              u.userId === 'USR-000001' ||
+              u.userId === 'USR-MAIN-ADMIN')
           ) {
             return {
               ...u,
               isMainAdmin: true,
               role: 'admin',
               email: u.email || MAIN_ADMIN_EMAIL,
+              name: 'Kajol Chandra Das',
+              displayName: 'কাজল চন্দ্র দাস (প্রধান অ্যাডমিন)',
             };
           }
           return u;
@@ -3592,8 +3591,58 @@ export class StorageService {
   }
 
   static resetToInitialDatabase(): FullAppData {
-    const admin = MAIN_ADMIN_ACCOUNT;
-    this.resetFinancialDataToZero(admin);
+    // 0. Mark full reset active with current timestamp so cloud sync never resurrects old records
+    const now = Date.now();
+    localStorage.setItem('pakura_full_reset_active', 'true');
+    localStorage.setItem('pakura_reset_timestamp', String(now));
+
+    // 1. Wipe all member records completely (clean slate)
+    this.saveMembers([]);
+
+    // 2. Wipe all financial records and transaction ledgers completely
+    this.saveContributions([]);
+    this.saveLoans([]);
+    this.saveBorrowers([]);
+    this.saveLoanPayments([]);
+    this.saveIncomeRecords([]);
+    this.saveExpenseRecords([]);
+    this.saveTransactions([]);
+    this.saveReceipts([]);
+    this.saveProfitDistributions([]);
+    this.saveMemberWithdrawals([]);
+    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
+
+    // 3. Clear non-admin users, keeping only Super Admin
+    const users = this.getUsers().filter(
+      (u) => u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() || u.isMainAdmin
+    );
+    this.saveUsers(users);
+
+    // 4. Reset opening balances in settings to strictly ৳0
+    const settings = this.getSettings();
+    settings.cashOpeningBalance = 0;
+    settings.bankOpeningBalance = 0;
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+
+    // 5. Clear deleted members cache
+    try {
+      localStorage.removeItem('pakura_deleted_member_ids_v1');
+    } catch {}
+
+    // 6. Wipe all Firestore collections in background so cloud sync does not resurrect deleted records
+    FirebaseSyncService.wipeAllDataForCleanReset().catch((err) => {
+      console.warn('Firestore clean reset notice:', err);
+    });
+
+    this.logActivity({
+      userId: MAIN_ADMIN_ACCOUNT.userId,
+      userDisplayName: MAIN_ADMIN_ACCOUNT.displayName,
+      role: 'admin',
+      action: 'RESET_DATABASE_COMPLETELY',
+      module: 'System',
+      description: 'সম্পূর্ণ ডাটাবেজ, সদস্য তালিকা ও আর্থিক লেনদেন ইতিহাস সফলভাবে মুছে ৳০-তে রিসেট করা হয়েছে',
+    });
+
     return this.getAppData();
   }
 

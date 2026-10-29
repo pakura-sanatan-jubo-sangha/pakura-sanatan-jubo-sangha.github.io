@@ -10,6 +10,7 @@ import {
   SHEET_NAMES,
 } from '../lib/sheetsService';
 import { StorageService } from '../lib/storage';
+import { clearCachedAccessToken } from '../lib/firebase';
 import {
   FileSpreadsheet,
   RefreshCw,
@@ -139,11 +140,24 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
       );
     } catch (err: any) {
       console.error('Sync Error:', err);
+      const isAuthErr =
+        err?.status === 401 ||
+        err?.code === 'UNAUTHENTICATED' ||
+        err?.message?.includes('invalid authentication credentials') ||
+        err?.message?.includes('UNAUTHENTICATED');
+
       if (err?.message === 'POPUP_BLOCKED') {
         setSyncError(
           language === 'bn'
             ? 'ব্রাউজারে গুগল সাইন-ইন পপআপ ব্লক করা হয়েছে। অনুগ্রহ করে ব্রাউজার ইউআরএল বারের ডানপাশে পপআপ অনুমোদন করুন অথবা নিচে আপনার গুগল শিট আইডি বা অ্যাপস স্ক্রিপ্ট ব্যবহার করুন।'
             : 'Popup blocked by browser. Please allow popups or use the Google Apps Script Webhook below.'
+        );
+      } else if (isAuthErr) {
+        clearCachedAccessToken();
+        setSyncError(
+          language === 'bn'
+            ? 'গুগল সাইন-ইন টোকেনের মেয়াদ শেষ হয়েছে। অনুগ্রহ করে নিচের "পুনরায় গুগল লগইন ও সিঙ্ক করুন" বোতামে ক্লিক করুন।'
+            : 'Google access token expired. Please click "Re-authenticate with Google & Retry" below to refresh credentials.'
         );
       } else {
         setSyncError(
@@ -153,6 +167,28 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
               : 'Failed to sync. Please ensure Google login or use the 100% reliable Apps Script option below.')
         );
       }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleReauthAndSync = async () => {
+    try {
+      setIsSyncing(true);
+      setSyncError(null);
+      clearCachedAccessToken();
+      const token = await GoogleSheetsService.getValidToken(true);
+      if (token) {
+        await handleStepByStepSync();
+      }
+    } catch (e: any) {
+      console.warn('Re-auth error:', e);
+      setSyncError(
+        e?.message ||
+          (language === 'bn'
+            ? 'পুনরায় লগইন সম্পন্ন করা যায়নি।'
+            : 'Failed to re-authenticate with Google.')
+      );
     } finally {
       setIsSyncing(false);
     }
@@ -396,9 +432,30 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
         )}
 
         {syncError && (
-          <div className="mt-4 p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/60 text-xs text-red-800 dark:text-red-300 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
-            <span>{syncError}</span>
+          <div className="mt-4 p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/60 text-xs text-red-800 dark:text-red-300 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+              <span>{syncError}</span>
+            </div>
+            {(syncError.includes('টোকেন') ||
+              syncError.includes('token') ||
+              syncError.includes('authentication') ||
+              syncError.includes('UNAUTHENTICATED') ||
+              syncError.includes('সাইন-ইন')) && (
+              <button
+                type="button"
+                onClick={handleReauthAndSync}
+                disabled={isSyncing}
+                className="mt-2 px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>
+                  {language === 'bn'
+                    ? 'পুনরায় গুগল লগইন ও সিঙ্ক করুন'
+                    : 'Re-authenticate with Google & Retry'}
+                </span>
+              </button>
+            )}
           </div>
         )}
 

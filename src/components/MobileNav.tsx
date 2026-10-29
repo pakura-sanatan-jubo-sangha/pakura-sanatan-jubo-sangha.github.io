@@ -91,19 +91,34 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             </span>
           </button>
 
-          {/* Monthly Savings */}
-          <button
-            onClick={() => onSelectTab('contributions')}
-            className={`group flex flex-col items-center gap-0.5 p-1 rounded-xl text-[10px] font-medium transition-all duration-200 transform hover:scale-110 active:scale-95 cursor-pointer ${
-              currentTab === 'contributions'
-                ? 'text-amber-600 dark:text-amber-400 font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
-            }`}
-            title={language === 'bn' ? 'মাসিক সঞ্চয়' : 'Savings'}
-          >
-            <PiggyBank className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
-            <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'সঞ্চয়' : 'Savings'}</span>
-          </button>
+          {/* Members List (for members) or Monthly Savings (for admins) */}
+          {currentUser.role === 'member' ? (
+            <button
+              onClick={() => onSelectTab('members')}
+              className={`group flex flex-col items-center gap-0.5 p-1 rounded-xl text-[10px] font-medium transition-all duration-200 transform hover:scale-110 active:scale-95 cursor-pointer ${
+                currentTab === 'members'
+                  ? 'text-amber-600 dark:text-amber-400 font-bold'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+              }`}
+              title={language === 'bn' ? 'সদস্য তালিকা' : 'Members'}
+            >
+              <Users className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
+              <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'সদস্য' : 'Members'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => onSelectTab('contributions')}
+              className={`group flex flex-col items-center gap-0.5 p-1 rounded-xl text-[10px] font-medium transition-all duration-200 transform hover:scale-110 active:scale-95 cursor-pointer ${
+                currentTab === 'contributions'
+                  ? 'text-amber-600 dark:text-amber-400 font-bold'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+              }`}
+              title={language === 'bn' ? 'মাসিক সঞ্চয়' : 'Savings'}
+            >
+              <PiggyBank className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
+              <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'সঞ্চয়' : 'Savings'}</span>
+            </button>
+          )}
 
           {/* Loans - Visible to both Members and Admins to view loan manager, borrowers & outstanding balances! */}
           <button

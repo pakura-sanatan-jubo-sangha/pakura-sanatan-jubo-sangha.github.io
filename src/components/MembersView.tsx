@@ -37,7 +37,6 @@ interface MembersViewProps {
   onDeleteMember?: (systemId: string) => void;
   onRecordContributionForMember?: (member: Member) => void;
   onViewReceipt?: (receiptId: string) => void;
-  onLoadSampleMembers?: () => void;
   onOpenLoginModal?: () => void;
 }
 
@@ -52,7 +51,6 @@ export const MembersView: React.FC<MembersViewProps> = ({
   onDeleteMember,
   onRecordContributionForMember,
   onViewReceipt,
-  onLoadSampleMembers,
   onOpenLoginModal,
 }) => {
   const t = getTranslation(language);
@@ -99,16 +97,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
     0
   );
 
-  // Filtered members list: show all associated profiles for general members
-  const filteredMembers = isMember
-    ? myLinkedMemberRecords
-    : members.filter((m) => {
-        const matchesSearch =
-          m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          m.phone.includes(searchQuery);
-        const matchesStatus = filterStatus === 'all' || m.status === filterStatus;
-        return matchesSearch && matchesStatus;
-      });
+  // Filtered members list: show all association members with search and status filtering
+  const filteredMembers = members.filter((m) => {
+    const matchesSearch =
+      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.phone.includes(searchQuery);
+    const matchesStatus = filterStatus === 'all' || m.status === filterStatus;
+    return matchesSearch && matchesStatus;
+  });
 
   // 1. Unauthenticated / View-only Lock Gate
   if (isViewOnly) {
@@ -207,26 +203,25 @@ export const MembersView: React.FC<MembersViewProps> = ({
         )}
       </div>
 
-      {/* Member Privacy Notice */}
+      {/* Member Directory Information & Privacy Notice */}
       {isMember && (
         <div className="p-3.5 rounded-2xl bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60 text-xs text-emerald-900 dark:text-emerald-300 flex items-center gap-3">
           <Shield className="w-5 h-5 text-emerald-600 flex-shrink-0" />
           <div>
             <div className="font-bold text-sm">
-              {language === 'bn' ? 'ব্যক্তিগত তথ্য ও প্রোফাইল সুরক্ষা' : 'Personal Profile & Records Privacy'}
+              {language === 'bn' ? 'সংগঠনের পূর্ণাঙ্গ সদস্য তালিকা' : 'Official Association Members Roster'}
             </div>
             <div className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
               {language === 'bn'
-                ? 'সমিতির গোপনীয়তা নীতি অনুযায়ী সাধারণ সদস্যরা শুধুমাত্র নিজের তথ্য ও হিসাব দেখতে পারেন। অন্য সদস্যদের তথ্য সম্পূর্ণ অনধিগম্য ও সুরক্ষিত।'
-                : 'Under privacy policies, you can only view your own profile and records. Other members’ profiles remain confidential.'}
+                ? 'পাকুড়া সনাতন যুব সংঘের সকল সক্রিয় সদস্যদের তালিকা। গোপনীয়তা সুরক্ষার স্বার্থে মোবাইল নম্বরের আংশিক অংশ সুরক্ষিত রাখা হয়েছে।'
+                : 'Complete roster of all active members. Sensitive contact details remain masked for privacy.'}
             </div>
           </div>
         </div>
       )}
 
-      {/* Search & Status Filters (Admin only) */}
-      {!isMember && (
-        <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row gap-3 items-center justify-between">
+      {/* Search & Status Filters */}
+      <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -271,7 +266,6 @@ export const MembersView: React.FC<MembersViewProps> = ({
           </button>
         </div>
       </div>
-      )}
 
       {/* Member Cards Grid (Responsive & Anti-Slop) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -400,18 +394,115 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   <Plus className="w-4 h-4" />
                   <span>{language === 'bn' ? 'নতুন সদস্য যোগ করুন' : 'Add New Member'}</span>
                 </button>
-                {onLoadSampleMembers && (
-                  <button
-                    onClick={onLoadSampleMembers}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Users className="w-4 h-4" />
-                    <span>{language === 'bn' ? 'নমুনা সদস্য লোড করুন (লাইভ টেস্ট)' : 'Load Sample Members (Live Test)'}</span>
-                  </button>
-                )}
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Modal: Delete Member (From Header Action) */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                    {language === 'bn' ? 'সদস্য মুছুন' : 'Delete Member'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {language === 'bn' ? 'তালিকা থেকে স্থায়ীভাবে সদস্য অপসারণ' : 'Permanently remove member from roster'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {members.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-500">
+                {language === 'bn' ? 'তালিকায় কোনো সদস্য নেই।' : 'No members found in the roster.'}
+              </div>
+            ) : (
+              <div className="mt-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    {language === 'bn' ? 'যে সদস্যকে মুছে ফেলতে চান তাকে নির্বাচন করুন:' : 'Select Member to Delete:'}
+                  </label>
+                  <select
+                    value={selectedMemberIdToDelete || members[0]?.systemId}
+                    onChange={(e) => setSelectedMemberIdToDelete(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500 cursor-pointer"
+                  >
+                    {members.map((m) => (
+                      <option key={m.systemId} value={m.systemId}>
+                        {m.name} — {formatMemberPhone(m.phone, true)} (সঞ্চয়: ৳{(m.currentBalance || 0).toLocaleString()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Selected Member Preview Card */}
+                {(() => {
+                  const target = members.find((m) => m.systemId === (selectedMemberIdToDelete || members[0]?.systemId));
+                  if (!target) return null;
+                  return (
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-2">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500 dark:text-slate-400">{t.memberName}:</span>
+                        <span className="font-bold text-slate-900 dark:text-white">{target.name}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500 dark:text-slate-400">{t.phoneNumber}:</span>
+                        <span className="font-mono text-slate-800 dark:text-slate-200">{formatMemberPhone(target.phone, true)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60">
+                        <span className="text-slate-500 dark:text-slate-400">{t.currentBalance}:</span>
+                        <span className="font-bold text-amber-600 dark:text-amber-400">৳{(target.currentBalance || 0).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 text-xs text-red-700 dark:text-red-300 leading-relaxed">
+                  {language === 'bn'
+                    ? 'সতর্কতা: সদস্য মুছে ফেললে তার সকল প্রোফাইল তথ্য ডাটাবেজ থেকে মুছে যাবে।'
+                    : 'Warning: Deleting a member permanently removes their account from the association roster.'}
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteModal(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    {t.cancel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = members.find((m) => m.systemId === (selectedMemberIdToDelete || members[0]?.systemId));
+                      if (target) {
+                        setShowDeleteModal(false);
+                        setMemberToDelete(target);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'মুছে ফেলতে এগিয়ে যান' : 'Proceed to Delete'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

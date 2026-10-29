@@ -29,7 +29,41 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [filterMethod, setFilterMethod] = useState<'all' | 'cash' | 'bank'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filtered = transactions.filter((trx) => {
+  // Deduplicate transactions strictly to avoid duplicate rows or inflated totals
+  const uniqueTransactions = React.useMemo(() => {
+    const seenTxIds = new Set<string>();
+    const seenRefIds = new Set<string>();
+    const seenSignatures = new Set<string>();
+
+    // Sort to prioritize standard sequential TRX- IDs over synthetic TRX-C- prefixes
+    const sorted = [...transactions].sort((a, b) => {
+      const aIsSynthetic = a.transactionId?.includes('-C-') || a.transactionId?.includes('-P-') || a.transactionId?.includes('-L-') || a.transactionId?.includes('-I-') || a.transactionId?.includes('-E-') || a.transactionId?.includes('-W-');
+      const bIsSynthetic = b.transactionId?.includes('-C-') || b.transactionId?.includes('-P-') || b.transactionId?.includes('-L-') || b.transactionId?.includes('-I-') || b.transactionId?.includes('-E-') || b.transactionId?.includes('-W-');
+      if (aIsSynthetic !== bIsSynthetic) return aIsSynthetic ? 1 : -1;
+      return (a.transactionId || '').localeCompare(b.transactionId || '');
+    });
+
+    return sorted.filter((trx) => {
+      if (!trx || !trx.transactionId) return false;
+      if (seenTxIds.has(trx.transactionId)) return false;
+
+      const ref = trx.referenceId || trx.transactionId.replace(/^TRX-[CPLIEW]-/, '');
+      if (ref && seenRefIds.has(ref)) return false;
+
+      const monthMatch = trx.description?.match(/(\d{4}-\d{2})/);
+      const monthKey = monthMatch ? monthMatch[1] : '';
+      const sig = `${trx.type}|${trx.memberSystemId || trx.partyName?.trim().toLowerCase()}|${monthKey || trx.date}|${trx.credit}|${trx.debit}`;
+      if (seenSignatures.has(sig)) return false;
+
+      seenTxIds.add(trx.transactionId);
+      if (ref) seenRefIds.add(ref);
+      if (trx.referenceId) seenRefIds.add(trx.referenceId);
+      seenSignatures.add(sig);
+      return true;
+    });
+  }, [transactions]);
+
+  const filtered = uniqueTransactions.filter((trx) => {
     const matchesSearch =
       trx.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       trx.transactionId.toLowerCase().includes(searchQuery.toLowerCase());
@@ -120,7 +154,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             {language === 'bn' ? 'ব্যাংক হিসাবে জমাকৃত স্থিতি' : 'Bank Balance'}
           </span>
           <span className="text-2xl font-black text-white block mt-0.5">
-            ৳{transactions.filter(t => t.paymentMethod === 'bank').reduce((sum, t) => sum + (t.credit - t.debit), 0).toLocaleString()}
+            ৳{uniqueTransactions.filter(t => t.paymentMethod === 'bank').reduce((sum, t) => sum + (t.credit - t.debit), 0).toLocaleString()}
           </span>
           <span className="text-[10px] text-indigo-200/80 block mt-0.5">
             {language === 'bn' ? 'স্বয়ংক্রিয় লেনদেন ভিত্তিক হিসাব' : 'Automated balance from transactions'}

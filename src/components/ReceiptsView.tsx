@@ -201,16 +201,30 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
   // Multi-account filter: 'all_my', or specific systemId
   const [selectedAccountFilter, setSelectedAccountFilter] = useState<string>('all_my');
 
+  // Deduplicate receipts strictly so no two items/cards ever show for the same receipt or transaction
+  const uniqueReceipts = useMemo(() => {
+    const seenReceiptIds = new Set<string>();
+    const seenTxnIds = new Set<string>();
+    return receipts.filter((r) => {
+      if (!r || !r.receiptId) return false;
+      if (seenReceiptIds.has(r.receiptId)) return false;
+      if (r.transactionId && seenTxnIds.has(r.transactionId)) return false;
+      seenReceiptIds.add(r.receiptId);
+      if (r.transactionId) seenTxnIds.add(r.transactionId);
+      return true;
+    });
+  }, [receipts]);
+
   const myReceipts = useMemo(() => {
-    return receipts.filter((r) =>
+    return uniqueReceipts.filter((r) =>
       selectedAccountFilter === 'all_my'
         ? checkIsMyReceipt(r)
         : checkIsMyReceipt(r, selectedAccountFilter)
     );
-  }, [receipts, selectedAccountFilter, checkIsMyReceipt]);
+  }, [uniqueReceipts, selectedAccountFilter, checkIsMyReceipt]);
 
   // General members are strictly restricted to their own receipts only!
-  const baseList = isMember ? myReceipts : receipts;
+  const baseList = isMember ? myReceipts : uniqueReceipts;
 
   const filteredReceipts = useMemo(() => {
     return baseList.filter((r) => {

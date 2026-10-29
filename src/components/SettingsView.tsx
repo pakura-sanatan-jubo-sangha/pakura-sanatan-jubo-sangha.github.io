@@ -771,8 +771,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 text-xs text-red-700 dark:text-red-300 leading-relaxed mt-3">
               {language === 'bn'
-                ? 'এটি সমস্ত লেনদেন, জমা কিস্তি, ঋণ, ও ভাউচার মুছে দিয়ে এবং সকল সদস্যের সঞ্চয় ও মুনাফা ব্যালেন্স ৳০-তে রিসেট করে প্রাথমিক ৳০ তহবিলে ডাটাবেজ পুনঃস্থাপন করবে। নিবন্ধিত সদস্য তালিকা ও গঠনতান্ত্রিক নিয়মাবলী অক্ষুণ্ণ থাকবে।'
-                : 'This will reset all balances, contributions, loans, ledgers, and all individual member balances to initial ৳0 clean state. Member profiles and rules will remain intact.'}
+                ? 'এটি সমস্ত সদস্য তালিকা, লেনদেন, জমা কিস্তি, ঋণ, ও ভাউচার সম্পূর্ণ মুছে ফেলে ডাটাবেজ ও ক্লাউড প্রাথমিক ৳০ পরিচ্ছন্ন অবস্থায় পুনঃস্থাপন করবে। পরবর্তীতে শুধুমাত্র আপনার যুক্ত করা নতুন সদস্যগণই সিস্টেমে থাকবেন।'
+                : 'This will completely wipe all member lists, transactions, contributions, loans, and vouchers to an initial ৳0 clean slate. Only members you explicitly add will exist in the system.'}
             </div>
 
             <div className="mt-4 space-y-2">

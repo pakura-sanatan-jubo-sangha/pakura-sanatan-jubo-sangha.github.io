@@ -215,9 +215,14 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = initAuth((firebaseUser) => {
       if (firebaseUser) {
-        const adminUser = StorageService.loginAdminWithFirebase(firebaseUser);
-        setCurrentUser(adminUser);
-        setAppData(StorageService.getAppData());
+        // Only trigger admin login if it is a real Google account, not internal synthetic member phone login
+        const email = (firebaseUser.email || '').toLowerCase().trim();
+        const isSyntheticMember = email.endsWith('@member.pakura.org') || email.includes('member.pakura.org');
+        if (!isSyntheticMember && email) {
+          const adminUser = StorageService.loginAdminWithFirebase(firebaseUser);
+          setCurrentUser(adminUser);
+          setAppData(StorageService.getAppData());
+        }
       }
     });
 
@@ -449,17 +454,6 @@ export default function App() {
     const updated = StorageService.addMember(name, phone, currentUser);
     setAppData(updated);
     showToast(language === 'bn' ? `সদস্য "${name}" সফলভাবে যুক্ত হয়েছেন!` : `Member "${name}" added successfully!`);
-    triggerAutoSaveToGoogleSheets(updated);
-  };
-
-  const handleLoadSampleMembers = () => {
-    const updated = StorageService.loadSampleMembers(currentUser);
-    setAppData(updated);
-    showToast(
-      language === 'bn'
-        ? '৩টি নমুনা সদস্য সফলভাবে লোড হয়েছে! এখন আপনি সকল ফিচার ও বোতাম পরীক্ষা করতে পারেন।'
-        : 'Loaded 3 sample members successfully! You can now test all features and buttons.'
-    );
     triggerAutoSaveToGoogleSheets(updated);
   };
 
@@ -1227,7 +1221,6 @@ export default function App() {
               onDeleteMember={handleDeleteMember}
               onRecordContributionForMember={() => setCurrentTab('contributions')}
               onViewReceipt={handleViewReceipt}
-              onLoadSampleMembers={handleLoadSampleMembers}
               onOpenLoginModal={() => setIsLoginModalOpen(true)}
             />
           )}
@@ -1259,7 +1252,6 @@ export default function App() {
                 onRecordBulkContributions={handleRecordBulkContributions}
                 onViewReceipt={handleViewReceipt}
                 onOpenAddMember={() => setCurrentTab('members')}
-                onLoadSampleMembers={handleLoadSampleMembers}
                 onOpenLoginModal={() => setAuthModalState({ isOpen: true, mode: 'admin_login' })}
               />
             )
