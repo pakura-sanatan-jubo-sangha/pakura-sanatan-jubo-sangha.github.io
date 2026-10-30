@@ -231,6 +231,22 @@
         "periodLabel": { "type": "string", "maxLength": 100 }
       },
       "required": ["distributionId", "date", "totalAllocatedAmount", "memberCount"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application organization settings and administrator security configuration",
+      "type": "object",
+      "properties": {
+        "societyName": { "type": "string" },
+        "adminPassword": { "type": "string" },
+        "currency": { "type": "string" },
+        "monthlyContributionAmount": { "type": "number" },
+        "contributionDueDay": { "type": "number" },
+        "lateFeeAmount": { "type": "number" },
+        "loanMonthlyRate": { "type": "number" },
+        "cashOpeningBalance": { "type": "number" },
+        "bankOpeningBalance": { "type": "number" }
+      }
     }
   },
   "firestore": {
@@ -241,6 +257,10 @@
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
       "description": "User profiles for authenticated members and administrators"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/Settings" },
+      "description": "Global application configuration and admin security settings"
     },
     "/members/{memberId}": {
       "schema": { "$ref": "#/entities/Member" },
