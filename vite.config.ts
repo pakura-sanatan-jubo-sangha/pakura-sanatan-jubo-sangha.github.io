@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/',
+    base: '/pakura-sanatan-jubo-sangha.github.com/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
