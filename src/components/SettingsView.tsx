@@ -219,13 +219,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setFirebaseSyncStatus(null);
     try {
       const cloudData = await FirebaseSyncService.loadAllFromFirestore();
-      if (cloudData.members.length > 0 || cloudData.contributions.length > 0) {
+      const memberCount = cloudData.members?.length || 0;
+      const contribCount = cloudData.contributions?.length || 0;
+      if (memberCount > 0 || contribCount > 0) {
         setFirebaseSyncStatus({
           type: 'success',
           message:
             language === 'bn'
-              ? `ফায়ারবেস ক্লাউড থেকে ${cloudData.members.length} জন সদস্য ও ${cloudData.contributions.length} টি জমার তথ্য সফলভাবে যাচাই ও লোড করা হয়েছে!`
-              : `Retrieved ${cloudData.members.length} members and ${cloudData.contributions.length} contributions from Firebase Firestore!`,
+              ? `ফায়ারবেস ক্লাউড থেকে ${memberCount} জন সদস্য ও ${contribCount} টি জমার তথ্য সফলভাবে যাচাই ও লোড করা হয়েছে!`
+              : `Retrieved ${memberCount} members and ${contribCount} contributions from Firebase Firestore!`,
         });
       } else {
         setFirebaseSyncStatus({
@@ -721,6 +723,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span>{firebaseSyncStatus.message}</span>
             </div>
           )}
+
+          {/* GitHub Pages & Authorized Domains Status */}
+          <div className="p-3 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 text-[11px] text-blue-900 dark:text-blue-200 space-y-1">
+            <div className="font-bold flex items-center justify-between flex-wrap gap-1">
+              <span>
+                {language === 'bn' ? 'গুগল সাইন-ইন অথরাইজড ডোমেইন (GitHub Pages):' : 'Google Sign-In Authorized Domain (GitHub Pages):'}
+              </span>
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 font-semibold">
+                pakura-sanatan-jubo-sangha.github.io
+              </span>
+            </div>
+            <p className="text-slate-600 dark:text-slate-400">
+              {language === 'bn'
+                ? 'গুগল পপআপ সাইন-ইনের জন্য এই ডোমেইনটি ফায়ারবেস কনসোলে (Authentication -> Settings -> Authorized domains) যুক্ত করুন। তবে সরাসরি ইমেইল/পাসওয়ার্ড ও মোবাইল লগইন যে কোনো ডোমেইনে এখনই সম্পূর্ণ সক্রিয়।'
+                : 'For Google popup Sign-In, add this domain under Firebase Console (Authentication -> Settings -> Authorized domains). Direct Gmail/Password and Mobile login work immediately on all domains.'}
+            </p>
+          </div>
         </div>
 
         {/* Factory Reset to Initial ৳0 */}
