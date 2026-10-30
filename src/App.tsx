@@ -247,6 +247,10 @@ export default function App() {
         StorageService.mergeCloudData(cloudData);
         setAppData(StorageService.getAppData());
       }
+      // If cloud does not have settings yet, upload local settings so GitHub Pages and other domains receive them immediately
+      if (!cloudData?.settings) {
+        FirebaseSyncService.syncSettings(StorageService.getSettings()).catch(() => {});
+      }
     }).catch((err) => {
       console.warn('Initial Firestore data load notice:', err);
     });
