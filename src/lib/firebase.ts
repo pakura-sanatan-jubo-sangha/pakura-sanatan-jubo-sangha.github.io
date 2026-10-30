@@ -177,6 +177,11 @@ export const formatFirebaseAuthError = (error: any, lang: 'bn' | 'en' = 'bn'): s
       ? 'গুগল সাইন-ইন উইন্ডো বন্ধ করা হয়েছে।'
       : 'Google Sign-In window was closed or cancelled.';
   }
+  if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
+    return lang === 'bn'
+      ? 'ফায়ারবেস অনুমোদিত ডোমেইন সংক্রান্ত নোটিশ: গুগল পপআপ ব্যবহারের জন্য pakura-sanatan-jubo-sangha.github.io ডোমেইনটি ফায়ারবেস কনসোলে (Authorized Domains) যুক্ত করুন। তবে আপনি নিচে সরাসরি জিমেইল (freelancerkajolchandradas@gmail.com) ও পাসওয়ার্ড দিয়ে এখনই নিশ্চিতভাবে লগইন করতে পারেন!'
+      : 'Domain notice: pakura-sanatan-jubo-sangha.github.io must be added to Authorized Domains in Firebase Console for Google popup. However, you can log in right now directly using your Gmail and Admin Password below!';
+  }
   if (
     code === 'auth/operation-not-allowed' ||
     msg.includes('operation-not-allowed') ||
