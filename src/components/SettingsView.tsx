@@ -732,8 +732,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
               {language === 'bn'
-                ? 'সমস্ত আর্থিক লেনদেন, ঋণ ও সঞ্চয় মুছে দিয়ে ডাটাবেজ প্রাথমিক ৳০ তহবিলে প্রস্তুত করবে। প্রধান অ্যাডমিন জিমেইল নিশ্চিতকরণ আবশ্যক।'
-                : 'Resets all balances to ৳0 clean state without demo data. Requires entering Admin Gmail address.'}
+                ? 'সমস্ত আর্থিক লেনদেন, ঋণ ও সঞ্চয় মুছে দিয়ে তহবিল ৳০-তে রিসেট হবে। তবে আপনার সদস্য তালিকা অক্ষত ও বহাল থাকবে এবং ফায়ারবেসে সংরক্ষিত থাকবে।'
+                : 'Resets all financial balances to ৳0 clean slate. Your member roster remains completely intact and saved in Firebase.'}
             </div>
           </div>
 
@@ -764,15 +764,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {language === 'bn' ? 'ডাটাবেজ প্রাথমিক অবস্থায় রিসেট (৳০)' : 'Reset Database to Initial (৳0)'}
                 </h3>
                 <span className="text-[11px] text-red-500 font-semibold block">
-                  {language === 'bn' ? 'অপরিবর্তনীয় ও সংবেদনশীল প্রক্রিয়া' : 'Irreversible Administrative Action'}
+                  {language === 'bn' ? 'সদস্য তালিকা অক্ষত রেখে আর্থিক হিসাব ৳০ রিসেট' : 'Resets Financials to ৳0 (Members Intact)'}
                 </span>
               </div>
             </div>
 
             <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 text-xs text-red-700 dark:text-red-300 leading-relaxed mt-3">
               {language === 'bn'
-                ? 'এটি সমস্ত সদস্য তালিকা, লেনদেন, জমা কিস্তি, ঋণ, ও ভাউচার সম্পূর্ণ মুছে ফেলে ডাটাবেজ ও ক্লাউড প্রাথমিক ৳০ পরিচ্ছন্ন অবস্থায় পুনঃস্থাপন করবে। পরবর্তীতে শুধুমাত্র আপনার যুক্ত করা নতুন সদস্যগণই সিস্টেমে থাকবেন।'
-                : 'This will completely wipe all member lists, transactions, contributions, loans, and vouchers to an initial ৳0 clean slate. Only members you explicitly add will exist in the system.'}
+                ? 'ডাটাবেজ রিসেটের ফলে সমস্ত আর্থিক লেনদেন, ঋণ ও সঞ্চয় জমা কিস্তির হিসাব মুছে ৳০-তে রিসেট হবে। তবে আপনার সকল সদস্য তালিকা সম্পূর্ণ অক্ষত ও বহাল থাকবে এবং ফায়ারবেসে স্থায়ীভাবে সংরক্ষিত থাকবে। আপনি নিজে ম্যানুয়ালি এন্ট্রি না করা পর্যন্ত কোনো ফান্ড যুক্ত হবে না।'
+                : 'Resetting the database sets all financial balances to ৳0. Your entire member list remains completely intact and permanently saved in Firebase. No funds will be added until you manually enter them.'}
             </div>
 
             <div className="mt-4 space-y-2">

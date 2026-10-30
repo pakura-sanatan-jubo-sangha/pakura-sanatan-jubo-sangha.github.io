@@ -346,8 +346,24 @@ export class StorageService {
         });
         cloudData.members.forEach((m) => {
           if (deletedIds.has(m.systemId)) return;
-          if (isResetActive && !isAfterReset(m.createdAt || m.updatedAt)) return;
-          map.set(m.systemId, m);
+          // Member list always remains intact; merge into roster
+          const existing = map.get(m.systemId);
+          if (existing) {
+            map.set(m.systemId, {
+              ...existing,
+              ...m,
+              currentBalance: isResetActive ? (existing.currentBalance ?? 0) : (m.currentBalance ?? 0),
+              profitShareBalance: isResetActive ? (existing.profitShareBalance ?? 0) : (m.profitShareBalance ?? 0),
+              totalWithdrawn: isResetActive ? (existing.totalWithdrawn ?? 0) : (m.totalWithdrawn ?? 0),
+            });
+          } else {
+            map.set(
+              m.systemId,
+              isResetActive
+                ? { ...m, currentBalance: 0, profitShareBalance: 0, totalWithdrawn: 0 }
+                : m
+            );
+          }
         });
         const merged = Array.from(map.values());
         localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
@@ -362,6 +378,11 @@ export class StorageService {
             return;
           }
           if (u.memberSystemId && deletedIds.has(u.memberSystemId)) return;
+          if (u.memberSystemId) {
+            // Keep member user accounts intact
+            map.set(u.userId, u);
+            return;
+          }
           if (isResetActive && !isAfterReset(u.createdAt)) return;
           map.set(u.userId, u);
         });
@@ -3591,13 +3612,22 @@ export class StorageService {
   }
 
   static resetToInitialDatabase(): FullAppData {
-    // 0. Mark full reset active with current timestamp so cloud sync never resurrects old records
+    // 0. Mark full reset active with current timestamp so cloud sync never resurrects old financial records
     const now = Date.now();
     localStorage.setItem('pakura_full_reset_active', 'true');
     localStorage.setItem('pakura_reset_timestamp', String(now));
 
-    // 1. Wipe all member records completely (clean slate)
-    this.saveMembers([]);
+    // 1. Keep ALL member records completely intact, resetting their financial balances to strictly ৳0
+    const existingMembers = this.getMembers();
+    const today = new Date().toISOString().split('T')[0];
+    const intactMembers = existingMembers.map((m) => ({
+      ...m,
+      currentBalance: 0,
+      profitShareBalance: 0,
+      totalWithdrawn: 0,
+      updatedAt: today,
+    }));
+    this.saveMembers(intactMembers);
 
     // 2. Wipe all financial records and transaction ledgers completely
     this.saveContributions([]);
@@ -3612,9 +3642,13 @@ export class StorageService {
     this.saveMemberWithdrawals([]);
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
 
-    // 3. Clear non-admin users, keeping only Super Admin
+    // 3. Keep Super Admin and member user accounts aligned with intact members
+    const validMemberIds = new Set(intactMembers.map((m) => m.systemId));
     const users = this.getUsers().filter(
-      (u) => u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() || u.isMainAdmin
+      (u) =>
+        u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
+        u.isMainAdmin ||
+        (u.memberSystemId && validMemberIds.has(u.memberSystemId))
     );
     this.saveUsers(users);
 
@@ -3624,13 +3658,13 @@ export class StorageService {
     settings.bankOpeningBalance = 0;
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
 
-    // 5. Clear deleted members cache
+    // 5. Clear deleted members cache so intact members are never treated as deleted
     try {
       localStorage.removeItem('pakura_deleted_member_ids_v1');
     } catch {}
 
-    // 6. Wipe all Firestore collections in background so cloud sync does not resurrect deleted records
-    FirebaseSyncService.wipeAllDataForCleanReset().catch((err) => {
+    // 6. Wipe all financial records in Firestore while keeping intact members permanently saved
+    FirebaseSyncService.wipeAllDataForCleanReset(intactMembers).catch((err) => {
       console.warn('Firestore clean reset notice:', err);
     });
 
@@ -3640,7 +3674,7 @@ export class StorageService {
       role: 'admin',
       action: 'RESET_DATABASE_COMPLETELY',
       module: 'System',
-      description: 'সম্পূর্ণ ডাটাবেজ, সদস্য তালিকা ও আর্থিক লেনদেন ইতিহাস সফলভাবে মুছে ৳০-তে রিসেট করা হয়েছে',
+      description: `ডাটাবেজ আর্থিক হিসাব ৳০-তে সফলভাবে রিসেট করা হয়েছে। সদস্য তালিকা (${intactMembers.length} জন) সম্পূর্ণ অক্ষত রেখে ফায়ারবেসে স্থায়ীভাবে সংরক্ষণ করা হয়েছে।`,
     });
 
     return this.getAppData();

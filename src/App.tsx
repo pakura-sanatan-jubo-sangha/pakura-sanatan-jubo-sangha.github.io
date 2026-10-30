@@ -883,8 +883,8 @@ export default function App() {
     setAppData(resetData);
     showToast(
       language === 'bn'
-        ? 'ডাটাবেজ প্রাথমিক অবস্থায় (৳০) সম্পূর্ণ রিসেট সম্পন্ন হয়েছে!'
-        : 'Database successfully reset to initial (৳0) clean state!'
+        ? 'ডাটাবেজ আর্থিক হিসাব ৳০-তে রিসেট সম্পন্ন হয়েছে! সদস্য তালিকা সম্পূর্ণ অক্ষত ও ফায়ারবেসে সংরক্ষিত রয়েছে।'
+        : 'Database financial records reset to ৳0! All members remain intact and saved in Firebase.'
     );
     triggerAutoSaveToGoogleSheets(resetData);
   };

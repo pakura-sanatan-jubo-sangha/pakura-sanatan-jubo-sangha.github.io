@@ -538,12 +538,12 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Wipe all collections in Firestore on database reset so old data never reappears
+   * Wipe financial collections in Firestore on database reset while strictly keeping all members intact
    */
-  static async wipeAllDataForCleanReset(): Promise<void> {
+  static async wipeAllDataForCleanReset(intactMembers?: Member[]): Promise<void> {
     try {
+      // NOTE: 'members' is strictly excluded so member records are NEVER deleted on database reset
       const collectionsToWipe = [
-        'members',
         'contributions',
         'loans',
         'loan_payments',
@@ -569,18 +569,52 @@ export class FirebaseSyncService {
         }
       }
 
-      // Clear non-admin users
+      // Member records are ALWAYS preserved in Firestore with their financial balances set to ৳0
+      if (intactMembers && intactMembers.length > 0) {
+        for (const member of intactMembers) {
+          await this.syncMember({
+            ...member,
+            currentBalance: 0,
+            profitShareBalance: 0,
+            totalWithdrawn: 0,
+          });
+        }
+      } else {
+        try {
+          const membersSnap = await getDocs(collection(db, 'members'));
+          for (const mDoc of membersSnap.docs) {
+            await setDoc(
+              doc(db, 'members', mDoc.id),
+              {
+                currentBalance: 0,
+                profitShareBalance: 0,
+                totalWithdrawn: 0,
+                updatedAt: new Date().toISOString().split('T')[0],
+              },
+              { merge: true }
+            );
+          }
+        } catch (err) {
+          console.warn('Could not reset member balances in Firestore:', err);
+        }
+      }
+
+      // Clear non-admin, non-member users if any extraneous test accounts exist
       try {
         const usersSnap = await getDocs(collection(db, 'users'));
         for (const d of usersSnap.docs) {
           const data = d.data();
-          if (data.email?.toLowerCase() !== 'freelancerkajolchandradas@gmail.com') {
+          if (
+            data.email?.toLowerCase() !== 'freelancerkajolchandradas@gmail.com' &&
+            !data.isMainAdmin &&
+            !data.memberSystemId
+          ) {
             await deleteDoc(doc(db, 'users', d.id)).catch(() => {});
           }
         }
       } catch {}
 
-      // Write meta reset timestamp doc so any delayed reads recognize the reset
+      // Write meta reset timestamp doc so any delayed reads recognize the financial reset
       try {
         await setDoc(doc(db, '_system_meta', 'reset_state'), {
           lastResetAt: Date.now(),
@@ -597,7 +631,7 @@ export class FirebaseSyncService {
    * Reset all financial records in Firestore and set all member balances to ৳0
    */
   static async resetFinancialDataInFirestore(members: Member[]): Promise<void> {
-    await this.wipeAllDataForCleanReset();
+    await this.wipeAllDataForCleanReset(members);
   }
 
   /**
@@ -991,7 +1025,7 @@ export class FirebaseSyncService {
         usersSnap.value.forEach((d) => {
           const u = d.data();
           if (u?.userId) {
-            if (u.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' || u.isMainAdmin) {
+            if (u.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' || u.isMainAdmin || u.memberSystemId) {
               users.push(u as UserAccount);
             } else if (isItemAfterReset(u)) {
               users.push(u as UserAccount);
@@ -1008,11 +1042,8 @@ export class FirebaseSyncService {
         membersSnap.value.forEach((d) => {
           const m = d.data();
           if (m?.systemId) {
-            if (isItemAfterReset(m)) {
-              members.push(m as Member);
-            } else if (lastResetAt) {
-              deleteDoc(doc(db, 'members', d.id)).catch(() => {});
-            }
+            // Member records always remain intact and permanently saved in Firestore
+            members.push(m as Member);
           }
         });
         if (members.length > 0) result.members = members;
