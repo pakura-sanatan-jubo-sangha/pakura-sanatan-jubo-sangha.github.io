@@ -19,6 +19,7 @@ import {
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import {
   FullAppData,
+  AppSettings,
   Member,
   Contribution,
   Loan,
@@ -538,6 +539,48 @@ export class FirebaseSyncService {
   }
 
   /**
+   * Directly fetch a member by phone or systemId from Firestore (for immediate cross-origin login)
+   */
+  static async fetchMemberDirectly(identifier: string): Promise<Member | null> {
+    const cleanId = (identifier || '').trim();
+    if (!cleanId) return null;
+    const cleanPhone = normalizePhoneForAuth(cleanId);
+
+    try {
+      // 1. By Document ID (SYS-000001)
+      if (cleanId.toUpperCase().startsWith('SYS-') || cleanId.toUpperCase().startsWith('MEM-')) {
+        const snap = await getDoc(doc(db, 'members', cleanId.toUpperCase()));
+        if (snap.exists()) return snap.data() as Member;
+      }
+
+      // 2. By Phone Number
+      if (cleanPhone.length >= 8) {
+        const q = query(collection(db, 'members'), where('phone', '==', cleanPhone));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          return snap.docs[0].data() as Member;
+        }
+      }
+
+      // 3. Fallback: Search all members in Firestore
+      const allSnap = await getDocs(collection(db, 'members'));
+      for (const d of allSnap.docs) {
+        const m = d.data() as Member;
+        const mPhone = normalizePhoneForAuth(m.phone || '');
+        if (
+          m.systemId.toLowerCase() === cleanId.toLowerCase() ||
+          (cleanPhone.length >= 8 && mPhone.endsWith(cleanPhone.slice(-10)))
+        ) {
+          return m;
+        }
+      }
+    } catch (err) {
+      console.warn('Direct member fetch notice:', err);
+    }
+    return null;
+  }
+
+  /**
    * Wipe financial collections in Firestore on database reset while strictly keeping all members intact
    */
   static async wipeAllDataForCleanReset(intactMembers?: Member[]): Promise<void> {
@@ -883,10 +926,34 @@ export class FirebaseSyncService {
   }
 
   /**
+   * Sync organization settings and administrator security configuration to Firestore
+   */
+  static async syncSettings(settings: AppSettings): Promise<void> {
+    const path = 'settings/app_settings';
+    try {
+      const ref = doc(db, 'settings', 'app_settings');
+      await setDoc(
+        ref,
+        {
+          ...settings,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  }
+
+  /**
    * Export all local app records up to Firestore
    */
   static async syncAllToFirestore(appData: FullAppData): Promise<{ success: boolean; message: string }> {
     try {
+      // 0. Settings & Admin Security Config
+      if (appData.settings) {
+        await this.syncSettings(appData.settings);
+      }
       // 1. Users
       for (const u of appData.users || []) {
         await this.syncUserProfile(u);
@@ -1218,6 +1285,16 @@ export class FirebaseSyncService {
           }
         });
         if (transactions.length > 0) result.transactions = transactions;
+      }
+
+      // 9. Load Organization Settings & Admin Security Config from Firestore
+      try {
+        const settingsSnap = await getDoc(doc(db, 'settings', 'app_settings'));
+        if (settingsSnap.exists()) {
+          result.settings = settingsSnap.data() as AppSettings;
+        }
+      } catch (err) {
+        console.warn('Settings load notice:', err);
       }
     } catch (e) {
       console.warn('Error loading records from Firestore:', e);
