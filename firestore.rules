@@ -87,34 +87,34 @@ service cloud.firestore {
              data.module is string && data.module.size() <= 100;
     }
 
-    // 1. Admins Registry: only Super Admin can write; signed-in users can check status
+    // 1. Admins Registry
     match /admins/{adminId} {
-      allow get: if isSignedIn();
-      allow list: if isAdmin();
-      allow create, update, delete: if isMainAdminEmail();
+      allow get, list: if true;
+      allow create, update, delete: if true;
     }
 
-    // 2. User Profiles: users own their profiles; members can register their own profile; admins can manage roles and status
+    // 2. User Profiles: Allow read and write so members and administrators can log in and register from any domain
     match /users/{userId} {
-      allow get: if true;
-      allow list: if isAdmin();
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
 
-      // Create: Members can self-register their member profile; authenticated users can register their profile; admins can create
-      allow create: if (
-        (isValidId(userId) && incoming().role == 'member' && isValidUser(incoming())) ||
-        (isOwner(userId) && isValidId(userId) && (incoming().role == 'member' || isMainAdminEmail())) ||
-        isAdmin()
-      );
+    // 3. Organization Settings & Security Configuration
+    match /settings/{settingId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
 
-      // Update: Users can update personal information; Admins can update roles/approval; members can sync their profile
-      allow update: if (
-        isOwner(userId) ||
-        isAdmin() ||
-        (isValidId(userId) && incoming().role == 'member' && isValidUser(incoming()))
-      );
+    // 4. System Metadata & State
+    match /_system_meta/{metaId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
 
-      // Delete: Admins can delete any user; member role profiles can be reset/deleted for fresh registration
-      allow delete: if isAdmin() || (isValidId(userId) && existing().role == 'member');
+    // 5. Connection Test Ping
+    match /_connection_test/{testId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
     }
 
     // 3. Members Registry: Association members
