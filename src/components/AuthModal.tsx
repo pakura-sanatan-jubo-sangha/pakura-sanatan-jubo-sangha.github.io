@@ -5,6 +5,7 @@ import {
   googleSignIn,
   formatFirebaseAuthError,
 } from '../lib/firebase';
+import { FirebaseSyncService } from '../lib/firebaseSync';
 import {
   LogIn,
   UserPlus,
@@ -200,8 +201,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     // 2. Member direct login via Phone Number or Member ID (SYS-000001)
     // No SMS OTP and No CAPTCHA required!
-    const effectiveIdentifier = matchingMemberForLogin?.systemId || inputVal;
-    const result = StorageService.loginWithCredentials(effectiveIdentifier, passVal);
+    let effectiveIdentifier = matchingMemberForLogin?.systemId || inputVal;
+    let result = StorageService.loginWithCredentials(effectiveIdentifier, passVal);
+
+    if (!result.success) {
+      // Cross-origin fallback (e.g. GitHub Pages on first load before background cloud sync completes):
+      // Directly check Firestore for this member record
+      try {
+        const cloudMember = await FirebaseSyncService.fetchMemberDirectly(inputVal);
+        if (cloudMember) {
+          const localMembers = StorageService.getMembers();
+          if (!localMembers.some((m) => m.systemId === cloudMember.systemId)) {
+            localMembers.push(cloudMember);
+            StorageService.saveMembers(localMembers);
+          }
+          effectiveIdentifier = cloudMember.systemId;
+          result = StorageService.loginWithCredentials(effectiveIdentifier, passVal);
+        }
+      } catch (fetchErr) {
+        console.warn('Direct member Firestore login attempt notice:', fetchErr);
+      }
+    }
+
     setIsSubmitting(false);
 
     if (result.success && result.user) {
@@ -541,6 +562,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {isEmailInput && (
+                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    {language === 'bn'
+                      ? 'অ্যাডমিন পাসওয়ার্ড: admin123 (অথবা সেটিংসে আপনার নির্ধারিত পাসওয়ার্ড)'
+                      : 'Admin password: admin123 (or your custom password saved in settings)'}
+                  </p>
+                )}
               </div>
 
               {/* Submit Button */}
