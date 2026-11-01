@@ -565,8 +565,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 {isEmailInput && (
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                     {language === 'bn'
-                      ? 'অ্যাডমিন পাসওয়ার্ড: admin123 (অথবা সেটিংসে আপনার নির্ধারিত পাসওয়ার্ড)'
-                      : 'Admin password: admin123 (or your custom password saved in settings)'}
+                      ? 'অ্যাডমিন পাসওয়ার্ড (অথবা সেটিংসে আপনার নির্ধারিত পাসওয়ার্ড)'
+                      : 'Admin password (or your custom password saved in settings)'}
                   </p>
                 )}
               </div>
