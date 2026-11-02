@@ -86,40 +86,38 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     return activeMembers.every((m) => paidMemberIds.has(m.systemId));
   };
 
+  // Identify recorded contribution months in Firebase
+  const earliestContribMonth = useMemo(() => {
+    const validMonths = contributions
+      .map((c) => c.month)
+      .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
+      .sort();
+    return validMonths.length > 0 ? validMonths[0] : '2026-08';
+  }, [contributions]);
+
+  const latestActiveMonth = useMemo(() => {
+    const validMonths = contributions
+      .map((c) => c.month)
+      .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
+      .sort();
+    return validMonths.length > 0 ? validMonths[validMonths.length - 1] : '2026-10';
+  }, [contributions]);
+
   // Dynamic 15-month rolling view:
-  // Starts sequentially from October 2025 (2025-10).
-  // Strictly 100 Taka flat rate for all months (no extra 200 Taka admission fee for any entry).
-  // As the cycle progresses, oldest fully-paid entries drop off from the top view,
-  // and the next upcoming months are added to maintain a 15-month window ahead,
-  // enabling members to pay their dues 2 or 3 months in advance.
+  // Starts sequentially from the actual recorded start month in Firebase (2026-08).
+  // Strictly 100 Taka flat rate for all months.
   const rollingMonths = useMemo(() => {
-    let curYear = 2025;
-    let curMonth = 10; // October 2025 (1-indexed)
+    const [yStr, mStr] = earliestContribMonth.split('-');
+    let curYear = parseInt(yStr, 10) || 2026;
+    let curMonth = parseInt(mStr, 10) || 8;
 
-    // Shift past oldest months where all active members have already completed payment
-    let safety = 0;
-    if (activeMembers.length > 0) {
-      while (safety++ < 120) {
-        const mStr = `${curYear}-${String(curMonth).padStart(2, '0')}`;
-        if (isMonthCompleted(mStr)) {
-          curMonth++;
-          if (curMonth > 12) {
-            curMonth = 1;
-            curYear++;
-          }
-        } else {
-          break;
-        }
-      }
-    }
-
-    // Always generate exactly 15 consecutive months starting from curYear/curMonth
+    // Always generate consecutive months starting from the earliest recorded month (2026-08)
     const list: { value: string; label: string }[] = [];
     let genYear = curYear;
     let genMonth = curMonth;
 
     for (let i = 0; i < 15; i++) {
-      const mStr = `${genYear}-${String(genMonth).padStart(2, '0')}`;
+      const mVal = `${genYear}-${String(genMonth).padStart(2, '0')}`;
       const d = new Date(genYear, genMonth - 1, 1);
       // Display only month and year
       const label = d.toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US', {
@@ -127,7 +125,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
         year: 'numeric',
       });
 
-      list.push({ value: mStr, label });
+      list.push({ value: mVal, label });
 
       genMonth++;
       if (genMonth > 12) {
@@ -137,12 +135,13 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     }
 
     return list;
-  }, [contributions, activeMembers, language]);
+  }, [contributions, activeMembers, language, earliestContribMonth]);
 
-  // All historical months starting from October 2025 onwards for the History modal
+  // All historical months starting from the earliest active month onwards for the History modal
   const allHistoryMonths = useMemo(() => {
-    const startYear = 2025;
-    const startMonth = 10;
+    const [yStr, mStr] = earliestContribMonth.split('-');
+    const startYear = parseInt(yStr, 10) || 2026;
+    const startMonth = parseInt(mStr, 10) || 8;
 
     let maxYear = 2026;
     let maxMonth = 12;
@@ -168,20 +167,20 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     let curM = startMonth;
 
     while (curY < maxYear || (curY === maxYear && curM <= maxMonth)) {
-      const mStr = `${curY}-${String(curM).padStart(2, '0')}`;
+      const mVal = `${curY}-${String(curM).padStart(2, '0')}`;
       const d = new Date(curY, curM - 1, 1);
       const label = d.toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US', {
         month: 'long',
         year: 'numeric',
       });
 
-      const mContributions = contributions.filter((c) => c.month === mStr);
+      const mContributions = contributions.filter((c) => c.month === mVal);
       const paidMemberIds = new Set(mContributions.map((c) => c.memberSystemId));
       const totalCol = mContributions.reduce((sum, c) => sum + c.amount, 0);
       const isComp = activeMembers.length > 0 && activeMembers.every((m) => paidMemberIds.has(m.systemId));
 
       result.push({
-        value: mStr,
+        value: mVal,
         label,
         totalCollected: totalCol,
         expectedAmount: activeMembers.length * (monthlyAmount || 100),
@@ -199,10 +198,10 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     }
 
     return result;
-  }, [contributions, activeMembers, language, monthlyAmount, rollingMonths]);
+  }, [contributions, activeMembers, language, monthlyAmount, rollingMonths, earliestContribMonth]);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
-    return rollingMonths.length > 0 ? rollingMonths[0].value : '2025-10';
+    return latestActiveMonth;
   });
 
   // Combined deduplicated available months (historical + rolling window)

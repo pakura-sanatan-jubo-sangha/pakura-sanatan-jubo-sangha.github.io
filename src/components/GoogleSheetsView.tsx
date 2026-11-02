@@ -286,8 +286,8 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             {language === 'bn'
-              ? `ওয়েবসাইটের প্রতিটি সদস্য, সঞ্চয়, ঋণ, সভা ও হিসাব ${SHEET_NAMES.length}টি ট্যাবে নিখুঁতভাবে গুগল শিটে সংরক্ষণ করুন`
-              : `Record every single member, contribution, loan, meeting & ledger systematically into ${SHEET_NAMES.length} Google Sheet tabs`}
+              ? `ফায়ারবেস সম্পূর্ণ মূল ডাটাবেজ হিসেবে কাজ করে এবং গুগল শিট স্বয়ংক্রিয় ব্যাকআপ ও ঐতিহাসিক রেকর্ড সংরক্ষণ করে (${SHEET_NAMES.length}টি ট্যাবে)`
+              : `Firebase serves as the full operational database, while Google Sheets stores automated backups and historical records across ${SHEET_NAMES.length} tabs`}
           </p>
         </div>
 

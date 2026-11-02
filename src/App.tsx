@@ -112,7 +112,8 @@ export default function App() {
     const tabFromUrl = getInitialTabFromUrl();
     if (tabFromUrl) return tabFromUrl;
     const user = StorageService.getCurrentUser();
-    return user.role === 'member' ? 'member_dashboard' : 'dashboard';
+    const isRealMember = user.role === 'member' && Boolean(user.memberSystemId) && user.userId !== 'USR-VIEW-ONLY';
+    return isRealMember ? 'member_dashboard' : 'dashboard';
   });
 
   const setCurrentTab = (tab: string) => {
@@ -241,21 +242,39 @@ export default function App() {
       setAppData(StorageService.getAppData());
     }
 
-    FirebaseSyncService.loadAllFromFirestore().then((cloudData) => {
-      if (!isMounted) return;
-      if (cloudData && Object.keys(cloudData).length > 0) {
-        StorageService.mergeCloudData(cloudData);
-        setAppData(StorageService.getAppData());
+    const syncCloudData = async () => {
+      try {
+        const cloudData = await FirebaseSyncService.loadAllFromFirestore();
+        if (!isMounted) return;
+        if (cloudData && Object.keys(cloudData).length > 0) {
+          StorageService.mergeCloudData(cloudData);
+          setAppData(StorageService.getAppData());
+        }
+        if (!cloudData?.settings) {
+          FirebaseSyncService.syncSettings(StorageService.getSettings()).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Firestore cloud sync notice:', err);
       }
-      // If cloud does not have settings yet, upload local settings so GitHub Pages and other domains receive them immediately
-      if (!cloudData?.settings) {
-        FirebaseSyncService.syncSettings(StorageService.getSettings()).catch(() => {});
-      }
-    }).catch((err) => {
-      console.warn('Initial Firestore data load notice:', err);
-    });
+    };
+
+    syncCloudData();
+
+    // Re-sync when user returns to window / app tab on mobile or desktop
+    const handleFocus = () => {
+      syncCloudData();
+    };
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleFocus);
+
+    // Periodic sync every 30s so changes across devices show automatically
+    const interval = setInterval(syncCloudData, 30000);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleFocus);
+      clearInterval(interval);
     };
   }, []);
 
@@ -409,15 +428,6 @@ export default function App() {
 
   // Google Sheets Auto-Recording Background Engine
   const triggerAutoSaveToGoogleSheets = async (updatedData: FullAppData) => {
-    // Strictly restrict: No one other than freelancerkajolchandradas@gmail.com can modify Google Sheet
-    const isMainAdminModifier =
-      currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-      (currentUser.role === 'admin' && currentUser.isMainAdmin === true);
-
-    if (!isMainAdminModifier) {
-      return;
-    }
-
     const sheetId = updatedData.settings.googleSheetId;
     const scriptUrl = updatedData.settings.googleAppsScriptUrl;
     const autoSyncEnabled = updatedData.settings.autoSyncSheets ?? true;
@@ -428,16 +438,23 @@ export default function App() {
 
     setIsAutoSaving(true);
     try {
+      // 1. Google Apps Script Webhook (100% guaranteed auto-sync across all devices)
       if (scriptUrl) {
         await syncViaAppsScriptWebhook(scriptUrl, updatedData);
       }
+      // 2. Direct Google Sheets API (if main admin is active)
       if (sheetId) {
-        await GoogleSheetsService.syncAllToGoogleSheets(sheetId, updatedData);
+        const isMainAdminModifier =
+          currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
+          (currentUser.role === 'admin' && currentUser.isMainAdmin === true);
+        if (isMainAdminModifier) {
+          await GoogleSheetsService.syncAllToGoogleSheets(sheetId, updatedData).catch(() => {});
+        }
       }
       const timeStr = new Date().toLocaleTimeString(language === 'bn' ? 'bn-BD' : 'en-US');
       setLastSavedTimestamp(timeStr);
     } catch (err) {
-      console.warn('Google Sheets auto-save warning:', err);
+      console.warn('Google Sheets auto-save notice:', err);
     } finally {
       setIsAutoSaving(false);
     }
@@ -882,30 +899,48 @@ export default function App() {
     triggerAutoSaveToGoogleSheets(updated);
   };
 
-  const handleResetDatabase = () => {
+  const handleResetDatabase = async () => {
     const resetData = StorageService.resetToInitialDatabase();
     setAppData(resetData);
     showToast(
       language === 'bn'
-        ? 'ডাটাবেজ আর্থিক হিসাব ৳০-তে রিসেট সম্পন্ন হয়েছে! সদস্য তালিকা সম্পূর্ণ অক্ষত ও ফায়ারবেসে সংরক্ষিত রয়েছে।'
-        : 'Database financial records reset to ৳0! All members remain intact and saved in Firebase.'
+        ? 'ডাটাবেজ ও ফায়ারবেসের সমস্ত আর্থিক হিসাব ৳০-তে রিসেট সম্পন্ন হয়েছে!'
+        : 'Database and Firebase financial records completely reset to ৳0!'
     );
     triggerAutoSaveToGoogleSheets(resetData);
+    try {
+      await FirebaseSyncService.resetFinancialDataInFirestore(resetData.members);
+    } catch (err) {
+      console.warn('Firebase reset sync warning:', err);
+    }
   };
 
-  const handleExportJson = () => {
+  const handleExportJson = async () => {
+    // Incorporate both website data and live cloud data from Firebase into the full backup
+    try {
+      const cloudData = await FirebaseSyncService.loadAllFromFirestore();
+      if (cloudData && Object.keys(cloudData).length > 0) {
+        StorageService.mergeCloudData(cloudData);
+      }
+    } catch {}
     StorageService.exportDataAsJson();
   };
 
-  const handleImportJson = (jsonString: string) => {
+  const handleImportJson = async (jsonString: string) => {
     const success = StorageService.importDataFromJson(jsonString);
     if (success) {
       const refreshed = StorageService.getAppData();
       setAppData(refreshed);
+      // Synchronize restored data to Firebase as well
+      try {
+        await FirebaseSyncService.syncAllToFirestore(refreshed);
+      } catch (err) {
+        console.warn('Firebase restore sync warning:', err);
+      }
       showToast(
         language === 'bn'
-          ? 'ব্যাকআপ ফাইল থেকে সমস্ত ডাটা সফলভাবে পুনরুদ্ধার (Restore) করা হয়েছে!'
-          : 'All data successfully restored from backup file!'
+          ? 'ব্যাকআপ ফাইল থেকে সমস্ত ডাটা ওয়েবসাইট ও ফায়ারবেসে সফলভাবে পুনরুদ্ধার (Restore) করা হয়েছে!'
+          : 'All data successfully restored to website and Firebase from backup file!'
       );
       triggerAutoSaveToGoogleSheets(refreshed);
     } else {

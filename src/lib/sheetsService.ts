@@ -651,15 +651,21 @@ export async function syncViaAppsScriptWebhook(
 // Ready-to-use Google Apps Script Template
 export function getAppsScriptCodeTemplate(): string {
   return `/**
- * পাকুড়া সনাতন যুব সংঘ - Google Apps Script Web App
+ * পাকুড়া সনাতন যুব সংঘ - Google Apps Script Webhook & Automated Database Sync
+ * 
+ * ১০০% নির্ভরযোগ্য অটো-সিঙ্ক ও হিস্টোরিক্যাল রেকর্ড ব্যাকআপ সিস্টেম
  * 
  * সেটআপ নির্দেশিকা:
- * ১. আপনার গুগল শিটে যান -> Extensions -> Apps Script
- * ২. এই সমস্ত কোড সেখানে পেস্ট করুন
+ * ১. আপনার মূল গুগল শিটে যান -> Extensions -> Apps Script
+ * ২. পূর্বের সব কোড মুছে এই কোডটি সেখানে পেস্ট করুন
  * ৩. Deploy -> New deployment -> Select type: Web app
  * ৪. Execute as: Me, Who has access: Anyone
- * ৫. Deploy বাটনে চাপুন এবং প্রাপ্ত Web App URL টি অ্যাপ্লিকেশনে পেস্ট করুন।
+ * ৫. Deploy বাটনে চাপুন এবং প্রাপ্ত Web App URL টি সিস্টেমে পেস্ট করুন।
  */
+
+// অপশনাল: যদি আলাদা গুগল শিট ফাইলে হিস্টোরি রাখতে চান তবে নিচে তার Spreadsheet ID লিখুন
+// খালি রাখলে বর্তমান গুগল শিটেই "Historical_Entries_Log" নামে আলাদা ট্যাবে ইতিহাস সংরক্ষিত হবে
+var HISTORICAL_SPREADSHEET_ID = "";
 
 function doPost(e) {
   try {
@@ -674,7 +680,7 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "No data payload" })).setMimeType(ContentService.MimeType.JSON);
     }
     
-    // Write or update all tabs
+    // ১. মূল সক্রিয় শিটসমূহ আপডেট (Active Data Sheets)
     // 1. SummaryDashboard
     var metrics = data.metrics || {};
     writeSheet(ss, "SummaryDashboard", [
@@ -695,7 +701,7 @@ function doPost(e) {
       ["Last Synced Timestamp", new Date().toISOString()]
     ]);
 
-    // 3. Users / Admins: ONLY Admin Type, Name, Gmail Address (strictly NO passwords, pins, phone numbers or sensitive details)
+    // 3. Users / Admins (strictly NO passwords or sensitive tokens)
     var usersList = [
       ["Main Admin (প্রধান সুপার অ্যাডমিন)", "Kajol Chandra Das", "freelancerkajolchandradas@gmail.com"]
     ];
@@ -779,6 +785,34 @@ function doPost(e) {
       (data.activityLogs || []).slice(0, 300).map(function(l) { return [l.logId, l.dateTime || l.timestamp || "", l.userDisplayName || l.userName || "", l.role, l.action, l.module, l.description || l.details || ""]; })
     ));
     
+    // ২. হিস্টোরিক্যাল রেকর্ড লগ (Dedicated Historical Entries Archive)
+    // এটি কখনো মোছা হবে না; প্রতিটি লেনদেন ও সঞ্চয়ের সম্পূর্ণ ইতিহাস স্থায়ীভাবে সংরক্ষিত থাকবে
+    var targetHistorySS = ss;
+    if (HISTORICAL_SPREADSHEET_ID && HISTORICAL_SPREADSHEET_ID.trim().length > 10) {
+      try {
+        targetHistorySS = SpreadsheetApp.openById(HISTORICAL_SPREADSHEET_ID.trim());
+      } catch (e) {
+        targetHistorySS = ss;
+      }
+    }
+    
+    appendHistoricalLog(targetHistorySS, data);
+
+    // ৩. ব্যাকআপ স্ন্যাপশট লগ (Backup Log)
+    writeSheet(ss, "BackupLog", [
+      ["BackupID", "Timestamp", "TriggeredBy", "TotalMembers", "TotalContributions", "TotalLoans", "TotalTransactions", "Status"],
+      [
+        "BKP-" + new Date().getTime(),
+        new Date().toISOString(),
+        "Webhook Auto-Sync",
+        (data.members || []).length,
+        (data.contributions || []).length,
+        (data.loans || []).length,
+        (data.transactions || []).length,
+        "SUCCESS"
+      ]
+    ]);
+    
     return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: new Date().toISOString() })).setMimeType(ContentService.MimeType.JSON);
   } catch(err) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
@@ -794,6 +828,60 @@ function writeSheet(ss, sheetName, rows) {
   if (rows && rows.length > 0) {
     sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
     sheet.getRange(1, 1, 1, rows[0].length).setFontWeight("bold").setBackground("#065f46").setFontColor("#ffffff");
+  }
+}
+
+// স্থায়ী ঐতিহাসিক খতিয়ান সংরক্ষণ (Immutable Append-Only Audit Trail)
+function appendHistoricalLog(ss, data) {
+  var sheetName = "Historical_Entries_Log";
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    var headers = [["LogTimestamp", "EntryType", "RecordID", "Party/Member", "Amount (৳)", "Date", "Description", "Status", "RecordedBy"]];
+    sheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+    sheet.getRange(1, 1, 1, headers[0].length).setFontWeight("bold").setBackground("#1e293b").setFontColor("#ffffff");
+    sheet.setFrozenRows(1);
+  }
+
+  // বিদ্যমান রেকর্ড আইডিগুলো সংগ্রহ করা যাতে ডুপ্লিকেট না হয়
+  var lastRow = sheet.getLastRow();
+  var existingIds = {};
+  if (lastRow > 1) {
+    var idColValues = sheet.getRange(2, 3, lastRow - 1, 1).getValues();
+    for (var i = 0; i < idColValues.length; i++) {
+      if (idColValues[i][0]) existingIds[idColValues[i][0]] = true;
+    }
+  }
+
+  var nowStr = new Date().toISOString();
+  var newRows = [];
+
+  // ১. সঞ্চয় জমা এন্ট্রি
+  (data.contributions || []).forEach(function(c) {
+    if (c.contributionId && !existingIds[c.contributionId]) {
+      newRows.push([nowStr, "Contribution", c.contributionId, c.memberName || c.memberSystemId, c.amount, c.contributionDate || c.month, "মাসিক সঞ্চয় (" + c.month + ")", c.status, c.recordedBy || ""]);
+      existingIds[c.contributionId] = true;
+    }
+  });
+
+  // ২. ক্যাশ ও ব্যাংক লেনদেন
+  (data.transactions || []).forEach(function(t) {
+    if (t.transactionId && !existingIds[t.transactionId]) {
+      newRows.push([nowStr, "Transaction", t.transactionId, t.partyName || "", (t.credit || 0) - (t.debit || 0), t.date, t.description || "", t.status, t.createdBy || ""]);
+      existingIds[t.transactionId] = true;
+    }
+  });
+
+  // ৩. ঋণ কিস্তি আদায়
+  (data.loanPayments || []).forEach(function(p) {
+    if (p.paymentId && !existingIds[p.paymentId]) {
+      newRows.push([nowStr, "LoanPayment", p.paymentId, p.borrowerName, p.amount, p.paymentDate, "ঋণ কিস্তি আদায় (আসল: " + p.principalPaid + ", মুনাফা: " + p.profitPaid + ")", "Completed", p.receivedBy || ""]);
+      existingIds[p.paymentId] = true;
+    }
+  });
+
+  if (newRows.length > 0) {
+    sheet.getRange(lastRow + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
   }
 }`;
 }

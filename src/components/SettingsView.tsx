@@ -517,11 +517,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* Google Sheets Sync Controls */}
+          {/* Google Sheets Backup Sync Controls */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
-            <div className="flex items-center gap-2 font-bold text-xs text-slate-900 dark:text-white">
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-              <span>{language === 'bn' ? 'গুগল শিট ক্লাউড সিঙ্ক কনফিগারেশন' : 'Google Sheets Cloud Sync Configuration'}</span>
+            <div>
+              <div className="flex items-center gap-2 font-bold text-xs text-slate-900 dark:text-white">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>{language === 'bn' ? 'গুগল শিট ক্লাউড ব্যাকআপ সিঙ্ক কনফিগারেশন' : 'Google Sheets Cloud Backup Sync Configuration'}</span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {language === 'bn'
+                  ? 'ফায়ারবেস সম্পূর্ণ লাইভ ডাটাবেজ হিসেবে কাজ করে এবং গুগল শিট স্বয়ংক্রিয় ব্যাকআপ ভল্ট হিসেবে ব্যবহৃত হয়।'
+                  : 'Firebase operates as the live primary database; Google Sheets serves as the automated cloud backup vault.'}
+              </p>
             </div>
 
             <div>

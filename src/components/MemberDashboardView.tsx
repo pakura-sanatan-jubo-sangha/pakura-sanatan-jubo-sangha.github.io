@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Member,
   Contribution,
@@ -164,8 +164,13 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
 
   const formatMonthName = (monthStr: string) => {
     if (!monthStr) return '';
-    const [year, month] = monthStr.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const parts = monthStr.split('-');
+    if (parts.length < 2) return monthStr;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    if (isNaN(y) || isNaN(m)) return monthStr;
+    const date = new Date(y, m - 1, 1);
+    if (isNaN(date.getTime())) return monthStr;
     return date.toLocaleString(language === 'bn' ? 'bn-BD' : 'en-US', {
       month: 'long',
       year: 'numeric',
@@ -177,31 +182,57 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
   const primaryMember = actualLinkedMembers[0] || member;
   const linkedSystemIds = actualLinkedMembers.map((m) => m.systemId);
 
-  // Filter contributions for this member & linked accounts
-  const myContributions = contributions.filter((c) =>
-    linkedSystemIds.includes(c.memberSystemId)
-  );
+  // Filter contributions for this member & linked accounts (accurately reflects actual amount deposited)
+  const myContributions = useMemo(() => {
+    return contributions.filter(
+      (c) => linkedSystemIds.includes(c.memberSystemId) && c && c.month && !c.month.startsWith('2025-')
+    );
+  }, [contributions, linkedSystemIds]);
   const totalSavingsPaid = myContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
 
-  // Active account selection filtering
-  const effectiveContributions = selectedAccountId === 'all'
-    ? myContributions
-    : myContributions.filter((c) => c.memberSystemId === selectedAccountId);
+  // Active account selection filtering (sorted newest month first)
+  const effectiveContributions = useMemo(() => {
+    const list = selectedAccountId === 'all'
+      ? myContributions
+      : myContributions.filter((c) => c.memberSystemId === selectedAccountId);
+    return [...list].sort((a, b) => {
+      const monthDiff = (b.month || '').localeCompare(a.month || '');
+      if (monthDiff !== 0) return monthDiff;
+      return (b.contributionDate || '').localeCompare(a.contributionDate || '');
+    });
+  }, [myContributions, selectedAccountId]);
 
   const effectiveTotalSavingsPaid = effectiveContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
   const effectivePaidMonthsCount = effectiveContributions.length;
 
-  // Month calculations: Generate all months from September 2025 (society founding) to current month
-  const startYear = 2025;
-  const startMonth = 9; // September 2025
-  const allMonthsList: string[] = [];
+  // Month calculations: Generate months starting from the member's earliest recorded month in Firebase
+  const memberContribMonths = effectiveContributions
+    .map((c) => c.month)
+    .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
+    .sort();
+  const earliestMonth = memberContribMonths.length > 0 ? memberContribMonths[0] : '2026-08';
+  const latestMonth = memberContribMonths.length > 0 ? memberContribMonths[memberContribMonths.length - 1] : '2026-10';
+  const [eYearStr, eMonthStr] = earliestMonth.split('-');
+  const [lYearStr, lMonthStr] = latestMonth.split('-');
+  const startYear = parseInt(eYearStr, 10) || 2026;
+  const startMonth = parseInt(eMonthStr, 10) || 8;
+  const lYear = parseInt(lYearStr, 10) || 2026;
+  const lMonth = parseInt(lMonthStr, 10) || 10;
+
   const curDate = new Date();
   const curY = curDate.getFullYear();
   const curM = curDate.getMonth() + 1;
 
-  for (let y = startYear; y <= curY; y++) {
+  // Safeguard against client device clock discrepancies
+  const endYear = Math.max(lYear, curY);
+  const endMonth = (endYear === lYear && endYear === curY)
+    ? Math.max(lMonth, curM)
+    : (endYear === lYear ? lMonth : curM);
+
+  const allMonthsList: string[] = [];
+  for (let y = startYear; y <= endYear; y++) {
     const fromM = (y === startYear) ? startMonth : 1;
-    const toM = (y === curY) ? curM : 12;
+    const toM = (y === endYear) ? endMonth : 12;
     for (let m = fromM; m <= toM; m++) {
       allMonthsList.push(`${y}-${String(m).padStart(2, '0')}`);
     }
@@ -727,61 +758,70 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                    <Layers className="w-4 h-4" />
+                    {actualLinkedMembers.length > 1 ? <Layers className="w-4 h-4" /> : <User className="w-4 h-4" />}
                   </div>
                   <div>
                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      {language === 'bn' ? 'অ্যাকাউন্ট নির্বাচন' : 'Select Account'}
+                      {actualLinkedMembers.length > 1
+                        ? (language === 'bn' ? `অ্যাকাউন্ট নির্বাচন (${actualLinkedMembers.length}টি অ্যাকাউন্ট)` : `Select Account (${actualLinkedMembers.length} Accounts)`)
+                        : (language === 'bn' ? 'সদস্য অ্যাকাউন্ট' : 'Member Account')}
                     </span>
+                    {actualLinkedMembers.length === 1 && (
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {actualLinkedMembers[0].name} • {actualLinkedMembers[0].phone || actualLinkedMembers[0].systemId}
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Account Selection Buttons */}
-                <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
-                  {/* All Linked Accounts Button */}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAccountId('all')}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                      selectedAccountId === 'all'
-                        ? 'bg-emerald-600 text-white shadow-emerald-900/20'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>
-                      {language === 'bn'
-                        ? `All Linked Accounts (${actualLinkedMembers.length}) – সকল অ্যাকাউন্ট`
-                        : `All Linked Accounts (${actualLinkedMembers.length})`}
-                    </span>
-                  </button>
-
-                  {/* Individual Account Buttons */}
-                  {actualLinkedMembers.map((lm) => (
+                {/* Account Selection Buttons (Only displayed if user has 2, 3, or more linked accounts) */}
+                {actualLinkedMembers.length > 1 && (
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
+                    {/* All Linked Accounts Button */}
                     <button
-                      key={lm.systemId}
                       type="button"
-                      onClick={() => setSelectedAccountId(lm.systemId)}
+                      onClick={() => setSelectedAccountId('all')}
                       className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                        selectedAccountId === lm.systemId
+                        selectedAccountId === 'all'
                           ? 'bg-emerald-600 text-white shadow-emerald-900/20'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                       }`}
                     >
-                      <User className="w-3.5 h-3.5" />
-                      <span>{lm.name}</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                          selectedAccountId === lm.systemId
-                            ? 'bg-white/20 text-white'
-                            : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        ৳{(lm.currentBalance || 0).toLocaleString()}
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>
+                        {language === 'bn'
+                          ? `সকল অ্যাকাউন্ট (${actualLinkedMembers.length}টি)`
+                          : `All Linked Accounts (${actualLinkedMembers.length})`}
                       </span>
                     </button>
-                  ))}
-                </div>
+
+                    {/* Individual Account Buttons */}
+                    {actualLinkedMembers.map((lm, idx) => (
+                      <button
+                        key={lm.systemId}
+                        type="button"
+                        onClick={() => setSelectedAccountId(lm.systemId)}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                          selectedAccountId === lm.systemId
+                            ? 'bg-emerald-600 text-white shadow-emerald-900/20'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <User className="w-3.5 h-3.5" />
+                        <span>{language === 'bn' ? `অ্যাকাউন্ট #${idx + 1}: ${lm.name}` : `Account #${idx + 1}: ${lm.name}`}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            selectedAccountId === lm.systemId
+                              ? 'bg-white/20 text-white'
+                              : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          ৳{(lm.currentBalance || 0).toLocaleString()}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Four Metric Cards (Under Select Account) */}
@@ -887,97 +927,163 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
               </div>
             </div>
 
-            {/* Multi-Account Aggregation Notice */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>
-                    {language === 'bn'
-                      ? `একই নাম ও নম্বরে যুক্ত অ্যাকাউন্টসমূহ (${actualLinkedMembers.length}টি)`
-                      : `Linked Accounts (${actualLinkedMembers.length})`}
-                  </span>
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  {language === 'bn'
-                    ? 'আপনার নাম ও মোবাইল নম্বরের বিপরীতে থাকা সকল অ্যাকাউন্টের তহবিল একত্রিত করে মোট ব্যালেন্স হিসাব করা হয়েছে।'
-                    : 'Funds from all associated accounts under your name & phone are combined into your aggregated balance.'}
-                </p>
-              </div>
-              <div className="text-right sm:border-l sm:border-slate-200 dark:sm:border-slate-700 sm:pl-4">
-                <span className="text-[11px] text-slate-400 block">
-                  {language === 'bn' ? 'সম্মিলিত মোট তহবিল' : 'Aggregated Total'}
-                </span>
-                <span className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                  ৳{aggregatedBalance.toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {/* Individual Linked Account Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {actualLinkedMembers.map((acc, index) => {
-                const accContributions = contributions.filter((c) => c.memberSystemId === acc.systemId);
-                const accPaidTotal = accContributions.reduce((s, c) => s + (c.amount || 0), 0);
-                return (
-                  <div
-                    key={acc.systemId}
-                    onClick={() => setSelectedAccountId(acc.systemId)}
-                    className={`p-4 rounded-2xl border transition-all shadow-2xs cursor-pointer ${
-                      selectedAccountId === acc.systemId
-                        ? 'border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-emerald-400'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-slate-800">
-                      <div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                          {language === 'bn' ? `অ্যাকাউন্ট নং ${index + 1}` : `Account #${index + 1}`}
-                        </span>
-                        <h5 className="font-bold text-sm text-slate-900 dark:text-white mt-1">
-                          {acc.name}
-                        </h5>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[10px] text-slate-400 block">
-                          {language === 'bn' ? 'হিসাব স্থিতি' : 'Balance'}
-                        </span>
-                        <span className="text-lg font-black text-slate-900 dark:text-white">
-                          ৳{(acc.currentBalance || 0).toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-[11px] text-slate-400 block">
-                          {language === 'bn' ? 'মোবাইল নম্বর:' : 'Phone:'}
-                        </span>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">
-                          {acc.phone}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[11px] text-slate-400 block">
-                          {language === 'bn' ? 'পরিশোধিত কিস্তি:' : 'Paid Installments:'}
-                        </span>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">
-                          {accContributions.length} {language === 'bn' ? 'টি' : 'records'} (৳{accPaidTotal})
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                        ✓ {language === 'bn' ? 'সক্রিয় অ্যাকাউন্ট' : 'Active Account'}
+            {/* Linked Accounts Breakdown (Single account vs Multi-account) */}
+            {actualLinkedMembers.length > 1 ? (
+              <>
+                {/* Multi-Account Aggregation Notice (Shown ONLY when 2, 3, or more accounts exist) */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span>
+                        {language === 'bn'
+                          ? `একই নাম ও নম্বরে যুক্ত অ্যাকাউন্টসমূহ (${actualLinkedMembers.length}টি)`
+                          : `Linked Accounts (${actualLinkedMembers.length})`}
                       </span>
-                      <span className="text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-0.5">
-                        <span>{language === 'bn' ? 'খতিয়ান নির্বাচিত' : 'View Ledger'}</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </span>
-                    </div>
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      {language === 'bn'
+                        ? 'আপনার নাম ও মোবাইল নম্বরের বিপরীতে থাকা সকল অ্যাকাউন্টের তহবিল একত্রিত করে মোট ব্যালেন্স হিসাব করা হয়েছে।'
+                        : 'Funds from all associated accounts under your name & phone are combined into your aggregated balance.'}
+                    </p>
                   </div>
-                );
-              })}
-            </div>
+                  <div className="text-right sm:border-l sm:border-slate-200 dark:sm:border-slate-700 sm:pl-4">
+                    <span className="text-[11px] text-slate-400 block">
+                      {language === 'bn' ? 'সম্মিলিত মোট তহবিল' : 'Aggregated Total'}
+                    </span>
+                    <span className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                      ৳{aggregatedBalance.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Individual Linked Account Cards (Dynamic columns: 2, 3, or 4) */}
+                <div
+                  className={`grid grid-cols-1 ${
+                    actualLinkedMembers.length === 2
+                      ? 'md:grid-cols-2'
+                      : actualLinkedMembers.length === 3
+                      ? 'md:grid-cols-3'
+                      : 'md:grid-cols-2 lg:grid-cols-4'
+                  } gap-3.5`}
+                >
+                  {actualLinkedMembers.map((acc, index) => {
+                    const accContributions = myContributions.filter((c) => c.memberSystemId === acc.systemId);
+                    const accPaidTotal = accContributions.reduce((s, c) => s + (c.amount || 0), 0);
+                    const isSelected = selectedAccountId === acc.systemId;
+                    return (
+                      <div
+                        key={acc.systemId}
+                        onClick={() => setSelectedAccountId(isSelected ? 'all' : acc.systemId)}
+                        className={`p-4 rounded-2xl border transition-all shadow-2xs cursor-pointer ${
+                          isSelected
+                            ? 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/30 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-emerald-400'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-slate-800">
+                          <div>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                              {language === 'bn' ? `অ্যাকাউন্ট #${index + 1}` : `Account #${index + 1}`}
+                            </span>
+                            <h5 className="font-bold text-sm text-slate-900 dark:text-white mt-1">
+                              {acc.name}
+                            </h5>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-slate-400 block">
+                              {language === 'bn' ? 'হিসাব স্থিতি' : 'Balance'}
+                            </span>
+                            <span className="text-lg font-black text-slate-900 dark:text-white">
+                              ৳{(acc.currentBalance || 0).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-[11px] text-slate-400 block">
+                              {language === 'bn' ? 'মোবাইল নম্বর:' : 'Phone:'}
+                            </span>
+                            <span className="font-medium text-slate-700 dark:text-slate-300">
+                              {acc.phone}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-slate-400 block">
+                              {language === 'bn' ? 'পরিশোধিত কিস্তি:' : 'Paid Installments:'}
+                            </span>
+                            <span className="font-medium text-slate-700 dark:text-slate-300">
+                              {accContributions.length} {language === 'bn' ? 'টি' : 'records'} (৳{accPaidTotal.toLocaleString()})
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
+                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                            ✓ {language === 'bn' ? 'সক্রিয় অ্যাকাউন্ট' : 'Active Account'}
+                          </span>
+                          <span className="text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-0.5">
+                            <span>
+                              {isSelected
+                                ? (language === 'bn' ? 'নির্বাচিত ✓' : 'Selected ✓')
+                                : (language === 'bn' ? 'খতিয়ান দেখুন' : 'View Ledger')}
+                            </span>
+                            <ArrowRight className="w-3 h-3" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              /* Single Account Details Card (Clean display for single account members) */
+              <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-100 dark:border-emerald-800">
+                    {actualLinkedMembers[0]?.name ? actualLinkedMembers[0].name.charAt(0) : <User className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                        {actualLinkedMembers[0]?.name}
+                      </h4>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                        {language === 'bn' ? 'সদস্য আইডি:' : 'ID:'} {actualLinkedMembers[0]?.systemId}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      {language === 'bn' ? 'মোবাইল নম্বর:' : 'Phone:'}{' '}
+                      <span className="font-medium text-slate-700 dark:text-slate-300">
+                        {actualLinkedMembers[0]?.phone}
+                      </span>
+                      {' • '}
+                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                        ✓ {language === 'bn' ? 'সক্রিয় সদস্য' : 'Active Member'}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 sm:border-l sm:border-slate-100 dark:sm:border-slate-800 sm:pl-5">
+                  <div>
+                    <span className="text-[11px] text-slate-400 block">
+                      {language === 'bn' ? 'মোট পরিশোধিত সঞ্চয়' : 'Total Savings Paid'}
+                    </span>
+                    <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                      ৳{(actualLinkedMembers[0]?.currentBalance || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="pl-3 border-l border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] text-slate-400 block">
+                      {language === 'bn' ? 'পরিশোধিত কিস্তি' : 'Paid Installments'}
+                    </span>
+                    <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      {myContributions.length} {language === 'bn' ? 'টি মাস' : 'months'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Complete Payment History (মাসিক সঞ্চয় পরিশোধের পূর্ণাঙ্গ খতিয়ান) */}
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 shadow-xs">
@@ -991,10 +1097,14 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                       {language === 'bn' ? 'মাসিক সঞ্চয় পরিশোধের পূর্ণাঙ্গ খতিয়ান' : 'Complete Payment History'}
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {selectedAccountId === 'all'
+                      {actualLinkedMembers.length === 1
                         ? language === 'bn'
-                          ? `সর্বমোট ${effectiveContributions.length}টি জমার খতিয়ান ও রসিদ`
-                          : `All ${effectiveContributions.length} contribution records and receipts`
+                          ? `${actualLinkedMembers[0]?.name}-র সর্বমোট ${effectiveContributions.length}টি জমার খতিয়ান ও রসিদ`
+                          : `All ${effectiveContributions.length} contribution records and receipts for ${actualLinkedMembers[0]?.name}`
+                        : selectedAccountId === 'all'
+                        ? language === 'bn'
+                          ? `সম্মিলিত ${actualLinkedMembers.length}টি অ্যাকাউন্টের সর্বমোট ${effectiveContributions.length}টি জমার খতিয়ান ও রসিদ`
+                          : `All ${effectiveContributions.length} contribution records across ${actualLinkedMembers.length} accounts`
                         : language === 'bn'
                         ? `${actualLinkedMembers.find((m) => m.systemId === selectedAccountId)?.name || 'অ্যাকাউন্টে'}-র ${effectiveContributions.length}টি কিস্তির খতিয়ান`
                         : `${effectiveContributions.length} records for selected account`}
@@ -1019,7 +1129,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                         <th className="p-3">#</th>
                         <th className="p-3">{language === 'bn' ? 'মাস' : 'Month'}</th>
                         <th className="p-3">{language === 'bn' ? 'জমার পরিমাণ' : 'Amount'}</th>
-                        {selectedAccountId === 'all' && (
+                        {actualLinkedMembers.length > 1 && selectedAccountId === 'all' && (
                           <th className="p-3">{language === 'bn' ? 'অ্যাকাউন্ট' : 'Account'}</th>
                         )}
                         <th className="p-3">{language === 'bn' ? 'ধরন' : 'Type'}</th>
@@ -1049,7 +1159,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                                 </span>
                               )}
                             </td>
-                            {selectedAccountId === 'all' && (
+                            {actualLinkedMembers.length > 1 && selectedAccountId === 'all' && (
                               <td className="p-3 text-slate-700 dark:text-slate-300 whitespace-nowrap font-medium">
                                 {accOwner?.name || c.memberName}
                               </td>

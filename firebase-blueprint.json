@@ -232,6 +232,25 @@
       },
       "required": ["distributionId", "date", "totalAllocatedAmount", "memberCount"]
     },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Master cash and bank ledger transaction",
+      "type": "object",
+      "properties": {
+        "transactionId": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 20 },
+        "type": { "type": "string", "maxLength": 50 },
+        "referenceId": { "type": "string", "maxLength": 64 },
+        "partyName": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 255 },
+        "debit": { "type": "number" },
+        "credit": { "type": "number" },
+        "balanceAfter": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "bank"] },
+        "status": { "type": "string", "maxLength": 20 }
+      },
+      "required": ["transactionId", "date", "type", "description"]
+    },
     "Settings": {
       "title": "Settings",
       "description": "Global application organization settings and administrator security configuration",
@@ -309,6 +328,10 @@
     "/profit_distributions/{distributionId}": {
       "schema": { "$ref": "#/entities/ProfitDistribution" },
       "description": "Profit distribution records"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Master cash and bank ledger transactions"
     }
   }
 }

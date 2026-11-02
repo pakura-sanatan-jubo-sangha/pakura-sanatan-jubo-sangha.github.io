@@ -42,7 +42,7 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
 
   // Filter contributions for this member (and linked accounts)
   const allMyContributions = contributions
-    .filter((c) => systemIds.includes(c.memberSystemId))
+    .filter((c) => systemIds.includes(c.memberSystemId) && c && c.month && !c.month.startsWith('2025-'))
     .sort((a, b) => (b.month || '').localeCompare(a.month || ''));
 
   const myContributions = selectedAccountId === 'all'
@@ -66,17 +66,38 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
     ? linkedMembers.reduce((sum, m) => sum + (m.totalWithdrawn || 0), 0)
     : (linkedMembers.find((m) => m.systemId === selectedAccountId)?.totalWithdrawn || 0);
 
-  // Month calculations: Generate months for 2026 up to current month to identify any outstanding payments
+  // Month calculations: Start from earliest recorded contribution month in Firebase (2026-08)
+  const memberContribMonths = myContributions
+    .map((c) => c.month)
+    .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
+    .sort();
+  const earliestMonth = memberContribMonths.length > 0 ? memberContribMonths[0] : '2026-08';
+  const latestMonth = memberContribMonths.length > 0 ? memberContribMonths[memberContribMonths.length - 1] : '2026-10';
+  const [eYearStr, eMonthStr] = earliestMonth.split('-');
+  const [lYearStr, lMonthStr] = latestMonth.split('-');
+  const startYear = parseInt(eYearStr, 10) || 2026;
+  const startMonth = parseInt(eMonthStr, 10) || 8;
+  const lYear = parseInt(lYearStr, 10) || 2026;
+  const lMonth = parseInt(lMonthStr, 10) || 10;
+
   const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonthNum = today.getMonth() + 1; // 1 to 12
+  const curY = today.getFullYear();
+  const curM = today.getMonth() + 1;
   const currentDay = today.getDate();
 
-  // Generate all months from January 2026 to current month
+  // Safeguard against client device clock discrepancies
+  const endYear = Math.max(lYear, curY);
+  const endMonth = (endYear === lYear && endYear === curY)
+    ? Math.max(lMonth, curM)
+    : (endYear === lYear ? lMonth : curM);
+
   const allMonthsList: string[] = [];
-  for (let m = 1; m <= currentMonthNum; m++) {
-    const monthStr = `${currentYear}-${String(m).padStart(2, '0')}`;
-    allMonthsList.push(monthStr);
+  for (let y = startYear; y <= endYear; y++) {
+    const fromM = (y === startYear) ? startMonth : 1;
+    const toM = (y === endYear) ? endMonth : 12;
+    for (let m = fromM; m <= toM; m++) {
+      allMonthsList.push(`${y}-${String(m).padStart(2, '0')}`);
+    }
   }
 
   // Outstanding/unpaid months
@@ -94,8 +115,13 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
 
   const formatMonthName = (monthStr: string) => {
     if (!monthStr) return '';
-    const [year, month] = monthStr.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const parts = monthStr.split('-');
+    if (parts.length < 2) return monthStr;
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10);
+    if (isNaN(year) || isNaN(month)) return monthStr;
+    const date = new Date(year, month - 1, 1);
+    if (isNaN(date.getTime())) return monthStr;
     return date.toLocaleString(language === 'bn' ? 'bn-BD' : 'en-US', {
       month: 'long',
       year: 'numeric',
