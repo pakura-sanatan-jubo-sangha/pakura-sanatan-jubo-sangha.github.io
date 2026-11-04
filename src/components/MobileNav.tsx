@@ -50,7 +50,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             ? 'text-amber-600 dark:text-amber-400 font-bold'
             : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
         }`}
-        title={language === 'bn' ? 'হোম ড্যাশবোর্ড' : 'Home Dashboard'}
+        title={language === 'bn' ? 'ড্যাশবোর্ড' : 'Dashboard'}
       >
         <LayoutDashboard className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
         <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'হোম' : 'Home'}</span>

@@ -85,11 +85,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // When not logged in (isViewOnly), ONLY Home or Dashboard appears in the navigation menu!
   const navItems = isViewOnly
     ? [
-        { id: 'dashboard', label: language === 'bn' ? 'হোম ড্যাশবোর্ড' : 'Home Dashboard', icon: LayoutDashboard },
+        { id: 'dashboard', label: language === 'bn' ? 'ড্যাশবোর্ড' : 'Dashboard', icon: LayoutDashboard },
       ]
     : isMember
     ? [
-        { id: 'dashboard', label: language === 'bn' ? 'হোম ড্যাশবোর্ড' : 'Home Dashboard', icon: LayoutDashboard },
+        { id: 'dashboard', label: language === 'bn' ? 'ড্যাশবোর্ড' : 'Dashboard', icon: LayoutDashboard },
         { id: 'member_dashboard', label: language === 'bn' ? 'আমার প্রোফাইল ও হিসাব' : 'My Profile & Ledger', icon: UserCheck },
         { id: 'members', label: language === 'bn' ? 'সদস্য তালিকা' : 'Members List', icon: Users },
         { id: 'receipts', label: language === 'bn' ? 'রশিদ ও ভাউচার খতিয়ান' : 'Receipt Vouchers & Records', icon: ReceiptText },
@@ -257,8 +257,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* Bottom Login / Logout Controls */}
+      {/* Bottom Login / Logout & Public Website Controls */}
       <div className="pt-2 border-t border-slate-200 dark:border-slate-800 mt-auto space-y-1.5">
+
         {isViewOnly ? (
           <button
             onClick={() => {

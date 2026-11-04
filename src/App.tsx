@@ -108,6 +108,15 @@ export default function App() {
   const [appData, setAppData] = useState<FullAppData>(() => StorageService.loadData());
   const [language, setLanguage] = useState<Language>(() => appData.settings.language || 'bn');
   const [theme, setTheme] = useState<Theme>(() => appData.settings.theme || 'light');
+  const [currentUser, setCurrentUser] = useState<UserAccount>(() => StorageService.getCurrentUser());
+
+  const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
+  const isMember = currentUser.role === 'member' && !isViewOnly;
+  const isAdmin = currentUser.role === 'admin';
+
+  // Public vs Private Interface separation:
+  // Public visitors ALWAYS land on the Public Website.
+  // Authenticated users enter their private dashboard, but can toggle to preview the public site.
   const [currentTab, setCurrentTabState] = useState<string>(() => {
     const tabFromUrl = getInitialTabFromUrl();
     if (tabFromUrl) return tabFromUrl;
@@ -126,31 +135,6 @@ export default function App() {
     }
   };
 
-  // Sync routing state with browser Back/Forward navigation & direct URL changes
-  useEffect(() => {
-    const handleUrlChange = () => {
-      const tab = getInitialTabFromUrl();
-      if (tab) {
-        setCurrentTabState(tab);
-      }
-    };
-
-    window.addEventListener('popstate', handleUrlChange);
-    window.addEventListener('hashchange', handleUrlChange);
-
-    // If loaded without a hash, sync the current tab to URL hash for shareable links
-    const currentHash = window.location.hash.replace(/^#\/?/, '').trim();
-    if (!currentHash && currentTab) {
-      window.history.replaceState({ tab: currentTab }, '', `#${currentTab}`);
-    }
-
-    return () => {
-      window.removeEventListener('popstate', handleUrlChange);
-      window.removeEventListener('hashchange', handleUrlChange);
-    };
-  }, [currentTab]);
-
-  const [currentUser, setCurrentUser] = useState<UserAccount>(() => StorageService.getCurrentUser());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [previewReceiptId, setPreviewReceiptId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -162,6 +146,41 @@ export default function App() {
     isOpen: boolean;
     mode: AuthMode;
   }>({ isOpen: false, mode: 'login' });
+
+  // Sync routing state with browser Back/Forward navigation & direct URL changes
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#/login/member') {
+        setAuthModalState({ isOpen: true, mode: 'member_login' });
+      } else if (hash === '#/login/admin') {
+        setAuthModalState({ isOpen: true, mode: 'admin_login' });
+      } else {
+        const tab = getInitialTabFromUrl();
+        if (tab) {
+          setCurrentTabState(tab);
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+
+    // Initial hash inspection for logins
+    if (typeof window !== 'undefined') {
+      const h = window.location.hash.toLowerCase();
+      if (h === '#/login/member') {
+        setAuthModalState({ isOpen: true, mode: 'member_login' });
+      } else if (h === '#/login/admin') {
+        setAuthModalState({ isOpen: true, mode: 'admin_login' });
+      }
+    }
+
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   // Notifications for current active user
   const notifications = useMemo(
@@ -196,7 +215,6 @@ export default function App() {
   };
 
   const t = getTranslation(language);
-  const isAdmin = currentUser.role === 'admin';
   const isMainAdmin =
     isAdmin &&
     (currentUser.isMainAdmin === true ||
@@ -318,8 +336,8 @@ export default function App() {
     setAppData(StorageService.getAppData());
     showToast(
       language === 'bn'
-        ? 'লগআউট সম্পন্ন! ওয়েবসাইটটি পুনরায় ভিউ-অনলি ড্যাশবোর্ড মোডে ফিরে এসেছে।'
-        : 'Logged out! The website is back to view-only dashboard mode.'
+        ? 'লগআউট সম্পন্ন হয়েছে।'
+        : 'Logged out successfully.'
     );
     if (['users', 'activity_log', 'settings'].includes(currentTab)) {
       setCurrentTab('dashboard');
@@ -537,6 +555,7 @@ export default function App() {
         ? `৳${amount.toLocaleString()} ${typeText} গ্রহণ করা হয়েছে ও রশিদ #${result.receipt.receiptId} তৈরি হয়েছে!`
         : `Collected ৳${amount.toLocaleString()} (${typeText}), Receipt #${result.receipt.receiptId} issued!`
     );
+
     triggerAutoSaveToGoogleSheets(result.data);
     handleViewReceipt(result.receipt.receiptId);
   };
@@ -564,6 +583,7 @@ export default function App() {
         ? `${memberSystemIds.length} জন সদস্যের চাঁদা সফলভাবে জমা হয়েছে!`
         : `Collected contributions for ${memberSystemIds.length} members!`
     );
+
     triggerAutoSaveToGoogleSheets(updated);
   };
 
@@ -965,8 +985,6 @@ export default function App() {
 
   // Metrics computation for dashboard & reports
   const metrics = StorageService.getFinancialSummary();
-  const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
-  const isMember = currentUser.role === 'member' && !isViewOnly;
 
   // Retrieve all linked member accounts associated with this user (strictly their own phone number)
   const linkedMemberRecords = StorageService.getLinkedMembersForUser(currentUser, appData.members);
@@ -1027,8 +1045,8 @@ export default function App() {
         onGoogleSheetsClick={() => setCurrentTab('sheets')}
         onAdminLoginSuccess={handleAdminLoginSuccess}
         onOpenLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-        onOpenMemberLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-        onOpenAdminLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
+        onOpenMemberLogin={() => setAuthModalState({ isOpen: true, mode: 'member_login' })}
+        onOpenAdminLogin={() => setAuthModalState({ isOpen: true, mode: 'admin_login' })}
         onLogout={handleLogout}
         isSheetConnected={Boolean(appData.settings.googleSheetId || appData.settings.googleAppsScriptUrl)}
         isAutoSaving={isAutoSaving}
@@ -1052,8 +1070,8 @@ export default function App() {
           onLanguageToggle={handleToggleLanguage}
           onThemeToggle={handleToggleTheme}
           onOpenLoginModal={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-          onOpenMemberLoginModal={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-          onOpenAdminLoginModal={() => setAuthModalState({ isOpen: true, mode: 'login' })}
+          onOpenMemberLoginModal={() => setAuthModalState({ isOpen: true, mode: 'member_login' })}
+          onOpenAdminLoginModal={() => setAuthModalState({ isOpen: true, mode: 'admin_login' })}
           onLogout={handleLogout}
           currentTab={currentTab}
           onSelectTab={setCurrentTab}
@@ -1066,8 +1084,9 @@ export default function App() {
 
         {/* Content View Body */}
         <main className="flex-1 p-3.5 sm:p-6 lg:p-8 min-w-0 overflow-x-hidden">
-          {/* 1. Dashboard View */}
-          {currentTab === 'dashboard' && (
+
+              {/* 1. Dashboard View */}
+              {currentTab === 'dashboard' && (
             <DashboardView
               metrics={metrics}
               recentTransactions={appData.transactions}
@@ -1102,7 +1121,7 @@ export default function App() {
               <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
                 {language === 'bn'
                   ? 'হোম ড্যাশবোর্ড ব্যতীত অন্যান্য বিস্তারিত তথ্য ও হিসাব দেখতে সাধারণ সদস্যগণ মোবাইল নম্বর দিয়ে এবং অ্যাডমিনগণ জিমেইল দিয়ে লগইন করুন।'
-                  : 'Viewing sections beyond the Home dashboard requires general members to log in with mobile phone numbers and administrators to log in with Gmail.'}
+                  : 'Viewing sections beyond the  Dashboard requires general members to log in with mobile phone numbers and administrators to log in with Gmail.'}
               </p>
               <div className="flex justify-center">
                 <button
@@ -1560,17 +1579,17 @@ export default function App() {
         language={language}
       />
 
-      {/* Full Notifications Center Modal (Opens on "View All" click) */}
-      <NotificationsModal
-        isOpen={isNotificationsModalOpen}
-        onClose={() => setIsNotificationsModalOpen(false)}
-        notifications={notifications}
-        currentUser={currentUser}
-        language={language}
-        onMarkAsRead={handleMarkNotificationRead}
-        onMarkAllAsRead={handleMarkAllNotificationsRead}
-        onNavigateTab={(tab) => setCurrentTab(tab)}
-      />
-    </div>
-  );
+        {/* Full Notifications Center Modal (Opens on "View All" click) */}
+        <NotificationsModal
+          isOpen={isNotificationsModalOpen}
+          onClose={() => setIsNotificationsModalOpen(false)}
+          notifications={notifications}
+          currentUser={currentUser}
+          language={language}
+          onMarkAsRead={handleMarkNotificationRead}
+          onMarkAllAsRead={handleMarkAllNotificationsRead}
+          onNavigateTab={(tab) => setCurrentTab(tab)}
+        />
+      </div>
+    );
 }

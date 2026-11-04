@@ -27,6 +27,7 @@ import {
   BookOpen,
   PiggyBank,
   LogIn,
+  Globe,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -256,6 +257,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-2">
             {!isViewOnly && (
               <>
+
                 {/* 1. User Profile Badge with Dropdown Menu */}
                 <div className="relative" ref={userMenuRef}>
                   <button

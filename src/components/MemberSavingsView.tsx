@@ -71,13 +71,13 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
     .map((c) => c.month)
     .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
     .sort();
-  const earliestMonth = memberContribMonths.length > 0 ? memberContribMonths[0] : '2026-08';
-  const latestMonth = memberContribMonths.length > 0 ? memberContribMonths[memberContribMonths.length - 1] : '2026-10';
+  const earliestMonth = memberContribMonths.length > 0 ? memberContribMonths[0] : '2025-10';
+  const latestMonth = memberContribMonths.length > 0 ? memberContribMonths[memberContribMonths.length - 1] : '2025-10';
   const [eYearStr, eMonthStr] = earliestMonth.split('-');
   const [lYearStr, lMonthStr] = latestMonth.split('-');
-  const startYear = parseInt(eYearStr, 10) || 2026;
-  const startMonth = parseInt(eMonthStr, 10) || 8;
-  const lYear = parseInt(lYearStr, 10) || 2026;
+  const startYear = parseInt(eYearStr, 10) || 2025;
+  const startMonth = parseInt(eMonthStr, 10) || 10;
+  const lYear = parseInt(lYearStr, 10) || 2025;
   const lMonth = parseInt(lMonthStr, 10) || 10;
 
   const today = new Date();

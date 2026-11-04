@@ -86,13 +86,13 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     return activeMembers.every((m) => paidMemberIds.has(m.systemId));
   };
 
-  // Identify recorded contribution months in Firebase
+  // Identify recorded contribution months in Firebase (Samiti began in October 2025)
   const earliestContribMonth = useMemo(() => {
     const validMonths = contributions
       .map((c) => c.month)
       .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
       .sort();
-    return validMonths.length > 0 ? validMonths[0] : '2026-08';
+    return validMonths.length > 0 ? validMonths[0] : '2025-10';
   }, [contributions]);
 
   const latestActiveMonth = useMemo(() => {
@@ -100,18 +100,18 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
       .map((c) => c.month)
       .filter((m) => m && m.match(/^\d{4}-\d{2}$/))
       .sort();
-    return validMonths.length > 0 ? validMonths[validMonths.length - 1] : '2026-10';
+    return validMonths.length > 0 ? validMonths[validMonths.length - 1] : '2025-10';
   }, [contributions]);
 
   // Dynamic 15-month rolling view:
-  // Starts sequentially from the actual recorded start month in Firebase (2026-08).
+  // Starts sequentially from the actual samiti start month (October 2025).
   // Strictly 100 Taka flat rate for all months.
   const rollingMonths = useMemo(() => {
     const [yStr, mStr] = earliestContribMonth.split('-');
-    let curYear = parseInt(yStr, 10) || 2026;
-    let curMonth = parseInt(mStr, 10) || 8;
+    let curYear = parseInt(yStr, 10) || 2025;
+    let curMonth = parseInt(mStr, 10) || 10;
 
-    // Always generate consecutive months starting from the earliest recorded month (2026-08)
+    // Always generate consecutive months starting from the earliest recorded month (2025-10)
     const list: { value: string; label: string }[] = [];
     let genYear = curYear;
     let genMonth = curMonth;
@@ -140,8 +140,8 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
   // All historical months starting from the earliest active month onwards for the History modal
   const allHistoryMonths = useMemo(() => {
     const [yStr, mStr] = earliestContribMonth.split('-');
-    const startYear = parseInt(yStr, 10) || 2026;
-    const startMonth = parseInt(mStr, 10) || 8;
+    const startYear = parseInt(yStr, 10) || 2025;
+    const startMonth = parseInt(mStr, 10) || 10;
 
     let maxYear = 2026;
     let maxMonth = 12;
@@ -201,8 +201,120 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
   }, [contributions, activeMembers, language, monthlyAmount, rollingMonths, earliestContribMonth]);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
-    return latestActiveMonth;
+    return latestActiveMonth || '2025-10';
   });
+
+  // When database is reset or empty, automatically set active month to samiti inception: October 2025
+  useEffect(() => {
+    if (contributions.length === 0) {
+      setSelectedMonth('2025-10');
+    }
+  }, [contributions.length]);
+
+  // Year options: Samiti foundation year (2025), preceding year, current year, following year, plus any recorded years
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const yearsSet = new Set<number>([
+      2025, // Samiti foundation year (October 2025)
+      currentYear - 1, // Preceding year
+      currentYear,     // Current year
+      currentYear + 1, // Following year
+    ]);
+    contributions.forEach((c) => {
+      const y = parseInt(c.month?.slice(0, 4), 10);
+      if (!isNaN(y) && y >= 2025 && y <= 2050) {
+        yearsSet.add(y);
+      }
+    });
+    return Array.from(yearsSet).sort((a, b) => a - b);
+  }, [contributions]);
+
+  // 12 calendar months with bilingual names
+  const MONTHS_OPTIONS = useMemo(() => [
+    { num: '01', name_bn: 'জানুয়ারি', name_en: 'January' },
+    { num: '02', name_bn: 'ফেব্রুয়ারি', name_en: 'February' },
+    { num: '03', name_bn: 'মার্চ', name_en: 'March' },
+    { num: '04', name_bn: 'এপ্রিল', name_en: 'April' },
+    { num: '05', name_bn: 'মে', name_en: 'May' },
+    { num: '06', name_bn: 'জুন', name_en: 'June' },
+    { num: '07', name_bn: 'জুলাই', name_en: 'July' },
+    { num: '08', name_bn: 'আগস্ট', name_en: 'August' },
+    { num: '09', name_bn: 'সেপ্টেম্বর', name_en: 'September' },
+    { num: '10', name_bn: 'অক্টোবর', name_en: 'October' },
+    { num: '11', name_bn: 'নভেম্বর', name_en: 'November' },
+    { num: '12', name_bn: 'ডিসেম্বর', name_en: 'December' },
+  ], []);
+
+  // Derived selected year and month number
+  const selectedYear = parseInt(selectedMonth?.split('-')[0], 10) || 2025;
+  const selectedMonthNum = selectedMonth?.split('-')[1] || '10';
+
+  // Filter available months for the selected year (for 2025, Samiti began in October 2025)
+  const currentYearMonthOptions = useMemo(() => {
+    const startM = selectedYear === 2025 ? 10 : 1;
+    return MONTHS_OPTIONS.filter((m) => parseInt(m.num, 10) >= startM);
+  }, [selectedYear, MONTHS_OPTIONS]);
+
+  // Payments made for each month within the selected year
+  const yearMonthsData = useMemo(() => {
+    const startM = selectedYear === 2025 ? 10 : 1;
+    const list = [];
+    for (let m = startM; m <= 12; m++) {
+      const mStr = String(m).padStart(2, '0');
+      const mKey = `${selectedYear}-${mStr}`;
+      const d = new Date(selectedYear, m - 1, 1);
+      const label = d.toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US', {
+        month: 'long',
+      });
+      const mContribs = contributions.filter((c) => c.month === mKey);
+      const totalCollected = mContribs.reduce((sum, c) => sum + (c.amount || 0), 0);
+      const paidMemberIds = new Set(mContribs.map((c) => c.memberSystemId));
+      const paidCount = activeMembers.filter((mbr) => paidMemberIds.has(mbr.systemId)).length;
+      const isComplete = activeMembers.length > 0 && paidCount === activeMembers.length;
+      const hasSome = paidCount > 0 && !isComplete;
+
+      list.push({
+        monthKey: mKey,
+        monthNum: mStr,
+        label,
+        totalCollected,
+        paidCount,
+        totalMembers: activeMembers.length,
+        isComplete,
+        hasSome,
+        isPending: paidCount === 0,
+        isSelected: selectedMonth === mKey,
+      });
+    }
+    return list;
+  }, [selectedYear, contributions, activeMembers, language, selectedMonth]);
+
+  const handleYearChange = (newYear: number) => {
+    let newM = selectedMonthNum;
+    if (newYear === 2025 && parseInt(newM, 10) < 10) {
+      newM = '10';
+    }
+    const newMonth = `${newYear}-${newM}`;
+    setSelectedMonth(newMonth);
+    setSelectedMemberIds([]);
+  };
+
+  const handleMonthChange = (newMonthNum: string) => {
+    const newMonth = `${selectedYear}-${newMonthNum}`;
+    setSelectedMonth(newMonth);
+    setSelectedMemberIds([]);
+  };
+
+  const formatMonthYearLabel = (mVal: string) => {
+    if (!mVal) return '';
+    const [y, m] = mVal.split('-').map(Number);
+    if (!y || !m) return mVal;
+    const d = new Date(y, m - 1, 1);
+    return d.toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US', {
+      month: 'long',
+      year: 'numeric',
+    });
+  };
 
   // Combined deduplicated available months (historical + rolling window)
   const availableMonthOptions = useMemo(() => {
@@ -210,32 +322,17 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
     allHistoryMonths.forEach((m) => map.set(m.value, m.label));
     rollingMonths.forEach((m) => map.set(m.value, m.label));
     if (selectedMonth && !map.has(selectedMonth)) {
-      const [y, m] = selectedMonth.split('-').map(Number);
-      if (!isNaN(y) && !isNaN(m)) {
-        const d = new Date(y, m - 1, 1);
-        map.set(
-          selectedMonth,
-          d.toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US', {
-            month: 'long',
-            year: 'numeric',
-          })
-        );
-      }
+      map.set(selectedMonth, formatMonthYearLabel(selectedMonth));
     }
     return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
   }, [allHistoryMonths, rollingMonths, selectedMonth, language]);
 
-  // Ensure selectedMonth stays valid across historical and rolling months
+  // Ensure selectedMonth stays in valid YYYY-MM format
   useEffect(() => {
-    if (rollingMonths.length > 0) {
-      const isValid =
-        allHistoryMonths.some((m) => m.value === selectedMonth) ||
-        rollingMonths.some((m) => m.value === selectedMonth);
-      if (!isValid) {
-        setSelectedMonth(rollingMonths[0].value);
-      }
+    if (!selectedMonth || !selectedMonth.match(/^\d{4}-\d{2}$/)) {
+      setSelectedMonth(latestActiveMonth || '2025-10');
     }
-  }, [rollingMonths, allHistoryMonths, selectedMonth]);
+  }, [selectedMonth, latestActiveMonth]);
 
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
@@ -343,7 +440,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
 
   return (
     <div className="space-y-6 pb-12 animate-in fade-in duration-200">
-      {/* Header & Month Selector */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -368,25 +465,154 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
             <History className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <span>{language === 'bn' ? 'পেমেন্ট ইতিহাস' : 'History'}</span>
           </button>
+        </div>
+      </div>
 
-          {/* Month Picker: Displays only Month and Year */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
-            <Calendar className="w-4 h-4 text-amber-500" />
-            <select
-              value={selectedMonth}
-              onChange={(e) => {
-                setSelectedMonth(e.target.value);
+      {/* Month & Year Selector Bar */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              {language === 'bn' ? 'বর্তমান নির্বাচিত মাস:' : 'Selected Month:'}
+            </span>
+            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+              {formatMonthYearLabel(selectedMonth)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+            {/* Change Year Dropdown */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                {language === 'bn' ? 'বছর পরিবর্তন:' : 'Change Year:'}
+              </span>
+              <select
+                value={selectedYear}
+                onChange={(e) => handleYearChange(parseInt(e.target.value, 10))}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+              >
+                {availableYears.map((yr) => (
+                  <option key={yr} value={yr}>
+                    {yr}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Change Month Dropdown */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                {language === 'bn' ? 'মাস পরিবর্তন:' : 'Change Month:'}
+              </span>
+              <select
+                value={selectedMonthNum}
+                onChange={(e) => handleMonthChange(e.target.value)}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+              >
+                {currentYearMonthOptions.map((m) => (
+                  <option key={m.num} value={m.num}>
+                    {language === 'bn' ? m.name_bn : m.name_en}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Yearly Monthly Payments Overview: Displays payments made for each month within the selected year */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white">
+              {language === 'bn'
+                ? `${selectedYear} সালের মাসিক জমার খতিয়ান ও আদায় বিবরণী`
+                : `Monthly Savings Payments for ${selectedYear}`}
+            </h3>
+            {selectedYear === 2025 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                {language === 'bn' ? 'প্রতিষ্ঠাকালীন শুরু: অক্টোবর ২০২৫' : 'Inception: October 2025'}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
+            {language === 'bn'
+              ? `মোট আদায়: ৳${yearMonthsData.reduce((sum, m) => sum + m.totalCollected, 0).toLocaleString()}`
+              : `Year Total: ৳${yearMonthsData.reduce((sum, m) => sum + m.totalCollected, 0).toLocaleString()}`}
+          </span>
+        </div>
+
+        {/* Month cards grid for the selected year */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 pt-1">
+          {yearMonthsData.map((m) => (
+            <button
+              key={m.monthKey}
+              type="button"
+              onClick={() => {
+                setSelectedMonth(m.monthKey);
                 setSelectedMemberIds([]);
               }}
-              className="text-xs font-semibold bg-transparent text-slate-900 dark:text-white focus:outline-hidden cursor-pointer"
+              className={`p-3 rounded-xl text-left transition-all cursor-pointer border ${
+                m.isSelected
+                  ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-500/50'
+                  : m.isComplete
+                  ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/60 text-slate-800 dark:text-slate-200 hover:border-emerald-400'
+                  : m.hasSome
+                  ? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60 text-slate-800 dark:text-slate-200 hover:border-amber-400'
+                  : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
             >
-              {availableMonthOptions.map((opt) => (
-                <option key={opt.value} value={opt.value} className="bg-white dark:bg-slate-900">
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-xs truncate">
+                  {m.label}
+                </span>
+                <span
+                  className={`text-[10px] font-mono ${
+                    m.isSelected ? 'text-emerald-100' : 'text-slate-400'
+                  }`}
+                >
+                  {m.monthNum}
+                </span>
+              </div>
+
+              <div className="mt-1.5 flex items-center justify-between text-[11px]">
+                <span
+                  className={`font-black ${
+                    m.isSelected ? 'text-white' : 'text-emerald-700 dark:text-emerald-400'
+                  }`}
+                >
+                  ৳{m.totalCollected.toLocaleString()}
+                </span>
+                {m.isComplete ? (
+                  <span
+                    className={`text-[10px] font-bold flex items-center gap-0.5 ${
+                      m.isSelected ? 'text-emerald-200' : 'text-emerald-600 dark:text-emerald-400'
+                    }`}
+                  >
+                    ✓ {language === 'bn' ? 'সম্পূর্ণ' : 'Full'}
+                  </span>
+                ) : m.hasSome ? (
+                  <span
+                    className={`text-[10px] font-medium ${
+                      m.isSelected ? 'text-amber-200' : 'text-amber-600 dark:text-amber-400'
+                    }`}
+                  >
+                    {m.paidCount}/{m.totalMembers}
+                  </span>
+                ) : (
+                  <span
+                    className={`text-[10px] ${
+                      m.isSelected ? 'text-emerald-200' : 'text-slate-400'
+                    }`}
+                  >
+                    {language === 'bn' ? 'বকেয়া' : 'Pending'}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -474,7 +700,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
                 {language === 'bn' ? 'সদস্য তালিকা ও জমার অবস্থা' : 'Monthly Member Collection'}
               </span>
               <span className="text-xs text-slate-400 font-semibold">
-                {rollingMonths.find((m) => m.value === selectedMonth)?.label || selectedMonth}
+                {availableMonthOptions.find((m) => m.value === selectedMonth)?.label || selectedMonth}
               </span>
             </div>
 
@@ -617,7 +843,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
             <h3 className="font-bold text-base text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <span>{language === 'bn' ? 'সঞ্চয় জমা গ্রহণ' : 'Record Member Contribution'}</span>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                {rollingMonths.find((m) => m.value === selectedMonth)?.label || selectedMonth}
+                {availableMonthOptions.find((m) => m.value === selectedMonth)?.label || selectedMonth}
               </span>
             </h3>
 
@@ -784,7 +1010,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
                 <div className="mt-1">
                   <span className="text-slate-500">{language === 'bn' ? 'মাস:' : 'Month:'}</span>{' '}
                   <span className="font-bold text-slate-900 dark:text-white">
-                    {rollingMonths.find((m) => m.value === selectedMonth)?.label || selectedMonth}
+                    {availableMonthOptions.find((m) => m.value === selectedMonth)?.label || selectedMonth}
                   </span>
                 </div>
                 <div className="mt-1">
