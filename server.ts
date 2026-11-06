@@ -225,6 +225,157 @@ async function startServer() {
     }
   });
 
+  // 7. Google Apps Script Webhook Diagnostics & Health Check
+  app.post('/api/sheets/webhook-test', async (req: Request, res: Response) => {
+    try {
+      const { webAppUrl } = req.body;
+      if (!webAppUrl || typeof webAppUrl !== 'string' || !webAppUrl.startsWith('https://script.google.com/macros/s/')) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_URL',
+          message: 'সঠিক গুগল অ্যাপস স্ক্রিপ্ট ওয়েবহুক URL প্রদান করুন (URL must start with https://script.google.com/macros/s/)',
+        });
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
+      try {
+        const response = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'ping', test: true }),
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        const responseText = await response.text();
+        const isHtml = responseText.includes('<!DOCTYPE html>') || responseText.includes('<html');
+
+        if (response.status === 401 || (isHtml && (responseText.includes('ServiceLogin') || responseText.includes('accounts.google.com') || responseText.includes('ppConfig')))) {
+          return res.json({
+            success: false,
+            status: 401,
+            error: 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED',
+            message: 'গুগল ৪০১ (401 Unauthorized) এরর দিয়েছে: গুগল স্ক্রিপ্ট ডিপ্লয়মেন্টের অ্যাক্সেস "Anyone (যে কেউ)" করা নেই।',
+            solution: 'Google Apps Script এ যান -> Deploy -> Manage deployments -> Edit (পেন্সিল আইকন) -> "Who has access" এ "Anyone" নির্বাচন করে Deploy বাটনে ক্লিক করুন।',
+          });
+        }
+
+        if (response.status === 404) {
+          return res.json({
+            success: false,
+            status: 404,
+            error: 'WEBHOOK_NOT_FOUND',
+            message: 'গুগল স্ক্রিপ্ট ওয়েবহুক পাওয়া যায়নি (404 Not Found)। URL টি সঠিক কিনা যাচাই করুন।',
+          });
+        }
+
+        return res.json({
+          success: true,
+          status: response.status,
+          message: 'গুগল স্ক্রিপ্ট ওয়েবহুক সক্রিয় এবং কাজ করছে!',
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timeout);
+        return res.json({
+          success: false,
+          error: 'CONNECTION_FAILED',
+          message: fetchErr.name === 'AbortError' ? 'রিকোয়েস্ট টাইমআউট হয়েছে।' : fetchErr.message || 'কানেকশন ব্যর্থ হয়েছে।',
+        });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Webhook test failed' });
+    }
+  });
+
+  // 8. Server-Side Google Apps Script Webhook Sync Proxy (Eliminates browser CORS & opaque response issues)
+  app.post('/api/sheets/webhook-sync', async (req: Request, res: Response) => {
+    try {
+      const { webAppUrl, data } = req.body;
+      if (!webAppUrl || typeof webAppUrl !== 'string' || !webAppUrl.startsWith('https://script.google.com/macros/s/')) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_URL',
+          message: 'সঠিক গুগল অ্যাপস স্ক্রিপ্ট ওয়েবহুক URL প্রদান করুন',
+        });
+      }
+
+      if (!data) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_DATA',
+          message: 'সিঙ্ক করার জন্য ডাটা পেলোড অনুপস্থিত',
+        });
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout for large payloads
+
+      try {
+        const payload = {
+          action: 'syncAllData',
+          timestamp: new Date().toISOString(),
+          data,
+        };
+
+        const response = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        const responseText = await response.text();
+        const isHtml = responseText.includes('<!DOCTYPE html>') || responseText.includes('<html');
+
+        if (response.status === 401 || (isHtml && (responseText.includes('ServiceLogin') || responseText.includes('accounts.google.com') || responseText.includes('ppConfig')))) {
+          return res.status(401).json({
+            success: false,
+            status: 401,
+            error: 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED',
+            message: 'গুগল ৪০১ (401 Unauthorized) এরর দিয়েছে: গুগল স্ক্রিপ্ট ডিপ্লয়মেন্টের অ্যাক্সেস "Anyone (যে কেউ)" করা নেই।',
+            solution: 'Google Apps Script এ যান -> Deploy -> Manage deployments -> Edit (পেন্সিল আইকন) -> "Who has access" এ "Anyone" নির্বাচন করে Deploy বাটনে চাপুন।',
+          });
+        }
+
+        let parsedResponse: any = null;
+        try {
+          parsedResponse = JSON.parse(responseText);
+        } catch {
+          // not json
+        }
+
+        if (parsedResponse && parsedResponse.status === 'error') {
+          return res.status(500).json({
+            success: false,
+            error: 'APPS_SCRIPT_EXECUTION_ERROR',
+            message: parsedResponse.message || 'Google Apps Script execution error',
+          });
+        }
+
+        return res.json({
+          success: true,
+          status: response.status,
+          message: 'গুগল শিটে ডাটা সফলভাবে সংরক্ষিত হয়েছে!',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timeout);
+        return res.status(500).json({
+          success: false,
+          error: 'FETCH_FAILED',
+          message: fetchErr.name === 'AbortError' ? 'গুগল স্ক্রিপ্ট সাড়া দিতে বেশি সময় নিয়েছে (Timeout)' : fetchErr.message,
+        });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Webhook sync failed' });
+    }
+  });
+
   // --- Vite / Frontend Serving ---
   if (!isProduction) {
     const vite = await createViteServer({

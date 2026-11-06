@@ -620,32 +620,120 @@ export async function syncStepByStepToGoogleSheets(
   return true;
 }
 
-// Sync via Google Apps Script Web App (Webhook) - Works 100% without OAuth issues
+// Diagnostics and Live Health Check for Google Apps Script Webhook
+export interface WebhookTestResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+  message?: string;
+  solution?: string;
+}
+
+export async function testAppsScriptWebhook(webAppUrl: string): Promise<WebhookTestResult> {
+  if (!webAppUrl || !webAppUrl.startsWith('https://script.google.com/macros/s/')) {
+    return {
+      ok: false,
+      error: 'INVALID_URL',
+      message: 'গুগল অ্যাপস স্ক্রিপ্ট ওয়েবহুক URL অবশ্যই https://script.google.com/macros/s/... দিয়ে শুরু হতে হবে।',
+      solution: 'সঠিক গুগল স্ক্রিপ্ট ওয়েব অ্যাপ URL পেস্ট করুন।',
+    };
+  }
+
+  try {
+    const res = await fetch('/api/sheets/webhook-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webAppUrl }),
+    });
+    const json = await res.json();
+    return {
+      ok: json.success,
+      status: json.status,
+      error: json.error,
+      message: json.message,
+      solution: json.solution,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: 'NETWORK_ERROR',
+      message: err.message || 'সার্ভারের সাথে যোগাযোগ করা যায়নি।',
+    };
+  }
+}
+
+// Sync via Google Apps Script Web App (Webhook) - With full diagnostics and verification
 export async function syncViaAppsScriptWebhook(
   webAppUrl: string,
   data: FullAppData
-): Promise<boolean> {
-  const payload = {
-    action: 'syncAllData',
-    timestamp: new Date().toISOString(),
-    data,
-  };
+): Promise<{ success: boolean; message?: string }> {
+  if (!webAppUrl || !webAppUrl.startsWith('https://script.google.com/macros/s/')) {
+    throw new Error('অবৈধ গুগল স্ক্রিপ্ট URL। অনুগ্রহ করে সঠিক URL দিন।');
+  }
 
-  const res = await fetch(webAppUrl, {
-    method: 'POST',
-    mode: 'no-cors', // Apps Script redirect support
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  // 1. Try server-side proxy route first (verifies true HTTP status code 200 vs 401)
+  try {
+    const res = await fetch('/api/sheets/webhook-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webAppUrl, data }),
+    });
 
-  StorageService.updateSettings({
-    lastSyncDate: new Date().toLocaleString('bn-BD'),
-    lastSyncedAt: new Date().toISOString(),
-  });
+    const result = await res.json().catch(() => null);
 
-  return true;
+    if (res.status === 401 || result?.error === 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED') {
+      const error: any = new Error(
+        result?.message ||
+          'গুগল স্ক্রিপ্ট ডিপ্লয়মেন্টে 401 Unauthorized এরর! গুগল স্ক্রিপ্টে Deploy > Manage deployments-এ Who has access: "Anyone" নির্বাচন করুন।'
+      );
+      error.status = 401;
+      error.code = 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED';
+      error.solution = result?.solution;
+      throw error;
+    }
+
+    if (!res.ok || (result && !result.success)) {
+      throw new Error(result?.message || `গুগল শিট সিঙ্ক ব্যর্থ হয়েছে (HTTP ${res.status})`);
+    }
+
+    // Success! Update last sync date
+    StorageService.updateSettings({
+      lastSyncDate: new Date().toLocaleString('bn-BD'),
+      lastSyncedAt: new Date().toISOString(),
+    });
+
+    return { success: true, message: result?.message || 'সফলভাবে গুগল শিটে ডাটা সংরক্ষিত হয়েছে।' };
+  } catch (serverErr: any) {
+    if (serverErr.status === 401 || serverErr.code === 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED' || serverErr.message?.includes('401')) {
+      throw serverErr;
+    }
+
+    // Direct browser fetch fallback
+    console.warn('Backend proxy sync notice, attempting direct webhook call:', serverErr.message);
+    const payload = {
+      action: 'syncAllData',
+      timestamp: new Date().toISOString(),
+      data,
+    };
+
+    try {
+      await fetch(webAppUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      StorageService.updateSettings({
+        lastSyncDate: new Date().toLocaleString('bn-BD'),
+        lastSyncedAt: new Date().toISOString(),
+      });
+
+      return { success: true };
+    } catch (directErr: any) {
+      throw new Error(directErr.message || 'গুগল শিটে ডাটা সংরক্ষণ করা সম্ভব হয়নি।');
+    }
+  }
 }
 
 // Ready-to-use Google Apps Script Template
@@ -658,18 +746,36 @@ export function getAppsScriptCodeTemplate(): string {
  * সেটআপ নির্দেশিকা:
  * ১. আপনার মূল গুগল শিটে যান -> Extensions -> Apps Script
  * ২. পূর্বের সব কোড মুছে এই কোডটি সেখানে পেস্ট করুন
- * ৩. Deploy -> New deployment -> Select type: Web app
- * ৪. Execute as: Me, Who has access: Anyone
- * ৫. Deploy বাটনে চাপুন এবং প্রাপ্ত Web App URL টি সিস্টেমে পেস্ট করুন।
+ * ৩. Deploy -> New deployment (বা Manage deployments) -> Select type: Web app
+ * ৪. Execute as: Me (আপনার জিমেইল)
+ * ৫. Who has access: Anyone (অবশ্যই "Anyone" নির্বাচন করবেন, "Only myself" দিলে ৪০১ এরর আসবে)
+ * ৬. Deploy বাটনে চাপুন এবং প্রাপ্ত Web App URL টি সিস্টেমে পেস্ট করুন।
  */
 
 // অপশনাল: যদি আলাদা গুগল শিট ফাইলে হিস্টোরি রাখতে চান তবে নিচে তার Spreadsheet ID লিখুন
 // খালি রাখলে বর্তমান গুগল শিটেই "Historical_Entries_Log" নামে আলাদা ট্যাবে ইতিহাস সংরক্ষিত হবে
 var HISTORICAL_SPREADSHEET_ID = "";
 
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({
+    status: "ok",
+    app: "পাকুড়া সনাতন যুব সংঘ - Google Sheets Database Sync",
+    message: "Google Apps Script Webhook is active and working properly!",
+    timestamp: new Date().toISOString()
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
 function doPost(e) {
   try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "No post data received" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
     var json = JSON.parse(e.postData.contents);
+    if (json.action === "ping") {
+      return ContentService.createTextOutput(JSON.stringify({ status: "ok", message: "pong", timestamp: new Date().toISOString() })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     if (!ss) {
       return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "No active sheet" })).setMimeType(ContentService.MimeType.JSON);

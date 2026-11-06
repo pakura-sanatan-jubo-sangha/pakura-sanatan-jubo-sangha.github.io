@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Member, Contribution, Language, UserAccount, GeneralMeeting } from '../types';
 import { getTranslation, formatMemberPhone } from '../lib/translations';
-import { normalizePhoneNumber, StorageService } from '../lib/storage';
 import {
   Users,
   Search,
@@ -24,7 +23,6 @@ import {
   Shield,
   LogIn,
   Trash2,
-  Layers,
 } from 'lucide-react';
 
 interface MembersViewProps {
@@ -78,15 +76,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   const isMember = currentUser.role === 'member' && !isViewOnly;
   const canEdit = currentUser.role === 'admin';
 
-  // If member is logged in, find all their linked accounts (handles 1, 2, 3, 4, 5+ accounts associated with their phone number)
-  const myLinkedMemberRecords = isMember
-    ? StorageService.getLinkedMembersForUser(currentUser, members)
-    : [];
 
-  const combinedMemberBalance = myLinkedMemberRecords.reduce(
-    (sum, m) => sum + (m.currentBalance || 0),
-    0
-  );
 
   // Filtered members list: show all association members with search and status filtering
   const filteredMembers = members.filter((m) => {
@@ -194,76 +184,6 @@ export const MembersView: React.FC<MembersViewProps> = ({
         )}
       </div>
 
-      {/* Member Associated Accounts Banner (Lists all accounts associated with their phone number) */}
-      {isMember && myLinkedMemberRecords.length > 0 && (
-        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-md">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-emerald-100 text-xs font-semibold uppercase tracking-wider">
-                <Layers className="w-4 h-4" />
-                <span>
-                  {myLinkedMemberRecords.length > 1
-                    ? (language === 'bn' ? `আপনার ফোন নম্বরে নিবন্ধিত অ্যাকাউন্টসমূহ (${myLinkedMemberRecords.length}টি)` : `Your Associated Accounts (${myLinkedMemberRecords.length})`)
-                    : (language === 'bn' ? 'আপনার সদস্য অ্যাকাউন্ট' : 'Your Member Account')}
-                </span>
-              </div>
-              <h3 className="text-lg sm:text-xl font-bold mt-1 text-white">
-                {myLinkedMemberRecords[0]?.name}
-              </h3>
-              <p className="text-xs text-emerald-100/90 mt-0.5">
-                {language === 'bn' ? 'নিবন্ধিত মোবাইল নম্বর:' : 'Registered Phone:'}{' '}
-                <span className="font-mono font-bold text-white">{myLinkedMemberRecords[0]?.phone}</span>
-                {myLinkedMemberRecords.length > 1 && (
-                  <span className="ml-2 px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-bold">
-                    {myLinkedMemberRecords.length} {language === 'bn' ? 'টি অ্যাকাউন্ট যুক্ত' : 'Accounts Linked'}
-                  </span>
-                )}
-              </p>
-            </div>
-            <div className="text-right sm:border-l sm:border-white/20 sm:pl-4">
-              <span className="text-[11px] text-emerald-100 block">
-                {language === 'bn' ? 'সম্মিলিত মোট সঞ্চয়' : 'Combined Total Savings'}
-              </span>
-              <span className="text-xl sm:text-2xl font-black text-white">
-                ৳{combinedMemberBalance.toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {/* List all individual accounts */}
-          <div className={`mt-3.5 pt-3 border-t border-white/20 grid grid-cols-1 ${
-            myLinkedMemberRecords.length === 2
-              ? 'sm:grid-cols-2'
-              : myLinkedMemberRecords.length === 3
-              ? 'sm:grid-cols-3'
-              : 'sm:grid-cols-2 lg:grid-cols-4'
-          } gap-2.5`}>
-            {myLinkedMemberRecords.map((acc, aIdx) => (
-              <div
-                key={acc.systemId}
-                className="p-3 rounded-xl bg-white/10 backdrop-blur-xs border border-white/20 flex items-center justify-between text-xs"
-              >
-                <div>
-                  <span className="text-[10px] font-bold text-emerald-200 block">
-                    {language === 'bn' ? `অ্যাকাউন্ট #${aIdx + 1}` : `Account #${aIdx + 1}`}
-                  </span>
-                  <span className="font-semibold text-white block truncate max-w-[140px]">{acc.name}</span>
-                  <span className="text-[10px] text-emerald-100/80 font-mono block">{acc.systemId}</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-emerald-200 block">
-                    {language === 'bn' ? 'ব্যালেন্স' : 'Balance'}
-                  </span>
-                  <span className="font-bold text-white text-sm">
-                    ৳{(acc.currentBalance || 0).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Search & Status Filters */}
       <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-80">
@@ -314,16 +234,6 @@ export const MembersView: React.FC<MembersViewProps> = ({
       {/* Member Cards Grid (Responsive & Anti-Slop) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {filteredMembers.map((member, idx) => {
-          const siblingAccounts = members.filter((m) => {
-            if (!m.phone || !member.phone) return false;
-            const p1 = normalizePhoneNumber(m.phone);
-            const p2 = normalizePhoneNumber(member.phone);
-            if (p1.length < 8 || p2.length < 8) return false;
-            return p1 === p2 || p1.slice(-10) === p2.slice(-10);
-          });
-          const hasMultipleAccounts = siblingAccounts.length > 1;
-          const phoneAggregatedBalance = siblingAccounts.reduce((s, m) => s + (m.currentBalance || 0), 0);
-
           return (
             <div
               key={`${member.systemId}-${idx}`}
@@ -366,48 +276,8 @@ export const MembersView: React.FC<MembersViewProps> = ({
                         ৳{(member.currentBalance || 0).toLocaleString()}
                       </div>
                     </div>
-                    {hasMultipleAccounts && (
-                      <div className="text-right">
-                        <div className="text-[10px] text-slate-400">
-                          {language === 'bn' ? 'সম্মিলিত সঞ্চয়' : 'Combined'}
-                        </div>
-                        <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                          ৳{phoneAggregatedBalance.toLocaleString()}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
-
-                {/* Sibling Accounts under the same phone number (whether 2, 3, 4, 5+ accounts) */}
-                {hasMultipleAccounts && (
-                  <div className="mt-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
-                    <div className="flex items-center justify-between text-[11px] mb-1.5 font-semibold text-slate-700 dark:text-slate-300">
-                      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>
-                          {language === 'bn'
-                            ? `একই নম্বরে যুক্ত অ্যাকাউন্ট (${siblingAccounts.length}টি):`
-                            : `Linked Accounts (${siblingAccounts.length}):`}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {siblingAccounts.map((acc, sIdx) => (
-                        <span
-                          key={acc.systemId}
-                          className={`px-2 py-0.5 rounded-md text-[10px] font-medium border ${
-                            acc.systemId === member.systemId
-                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-300 font-bold'
-                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                          }`}
-                        >
-                          #{sIdx + 1}: {acc.name} (৳{(acc.currentBalance || 0).toLocaleString()})
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Action Buttons */}

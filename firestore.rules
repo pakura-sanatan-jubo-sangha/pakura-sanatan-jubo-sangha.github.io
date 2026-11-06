@@ -193,5 +193,11 @@ service cloud.firestore {
       allow get, list: if true;
       allow create, update, delete: if true;
     }
+
+    // 16. Shared Community Chat & Screenshot Messages
+    match /chat_messages/{messageId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
   }
 }

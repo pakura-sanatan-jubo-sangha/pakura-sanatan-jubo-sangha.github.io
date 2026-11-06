@@ -37,6 +37,7 @@ import { WithdrawalsManagementView } from './components/WithdrawalsManagementVie
 import { InteractiveHoverEffects } from './components/InteractiveHoverEffects';
 import { AuthModal, AuthMode } from './components/AuthModal';
 import { NotificationsModal } from './components/NotificationsModal';
+import { CommunityChatView } from './components/CommunityChatView';
 import {
   generateUserNotifications,
   markNotificationAsRead,
@@ -82,6 +83,7 @@ const VALID_SPA_TABS = new Set([
   'activity_log',
   'settings',
   'notifications',
+  'chat',
   'penalties',
   'profit',
   'member_profit',
@@ -471,8 +473,11 @@ export default function App() {
       }
       const timeStr = new Date().toLocaleTimeString(language === 'bn' ? 'bn-BD' : 'en-US');
       setLastSavedTimestamp(timeStr);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Google Sheets auto-save notice:', err);
+      if (err?.code === 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED' || err?.status === 401 || err?.message?.includes('401')) {
+        console.error('Google Sheets Webhook 401 Unauthorized: Check Deploy access settings in script.google.com');
+      }
     } finally {
       setIsAutoSaving(false);
     }
@@ -1085,8 +1090,8 @@ export default function App() {
         {/* Content View Body */}
         <main className="flex-1 p-3.5 sm:p-6 lg:p-8 min-w-0 overflow-x-hidden">
 
-              {/* 1. Dashboard View */}
-              {currentTab === 'dashboard' && (
+          {/* 1. Dashboard View (Hidden until user logs into an account) */}
+          {!isViewOnly && currentTab === 'dashboard' && (
             <DashboardView
               metrics={metrics}
               recentTransactions={appData.transactions}
@@ -1109,10 +1114,10 @@ export default function App() {
             />
           )}
 
-          {/* Guest / View-Only Access Gate for non-dashboard tabs */}
-          {isViewOnly && currentTab !== 'dashboard' && (
+          {/* Guest / View-Only Access Gate: Home Dashboard and private data remain strictly hidden until logged in */}
+          {isViewOnly && (
             <div className="max-w-md mx-auto my-12 p-6 sm:p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg text-center animate-in fade-in">
-              <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-4">
                 <Lock className="w-7 h-7" />
               </div>
               <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mb-2">
@@ -1120,16 +1125,16 @@ export default function App() {
               </h3>
               <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
                 {language === 'bn'
-                  ? 'হোম ড্যাশবোর্ড ব্যতীত অন্যান্য বিস্তারিত তথ্য ও হিসাব দেখতে সাধারণ সদস্যগণ মোবাইল নম্বর দিয়ে এবং অ্যাডমিনগণ জিমেইল দিয়ে লগইন করুন।'
-                  : 'Viewing sections beyond the  Dashboard requires general members to log in with mobile phone numbers and administrators to log in with Gmail.'}
+                  ? 'ওয়েবসাইটের হোম ড্যাশবোর্ড ও আর্থিক তথ্যাবলী দেখতে অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করুন।'
+                  : 'Please log in to your account to view the Home Dashboard and financial records.'}
               </p>
-              <div className="flex justify-center">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                 <button
                   onClick={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 text-white text-xs font-bold transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.02] active:scale-[0.98]"
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <LogIn className="w-4 h-4" />
-                  <span>{language === 'bn' ? 'লগইন করুন (Login)' : 'Login'}</span>
+                  <span>{language === 'bn' ? 'Login to Account' : 'Login to Account'}</span>
                 </button>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-center">
@@ -1553,6 +1558,15 @@ export default function App() {
                 </p>
               </div>
             )
+          )}
+
+          {/* 16. Shared Community Space & Chat (Members & Admins) */}
+          {!isViewOnly && currentTab === 'chat' && (
+            <CommunityChatView
+              currentUser={currentUser}
+              language={language}
+              onOpenLoginModal={() => setAuthModalState({ isOpen: true, mode: 'login' })}
+            />
           )}
         </main>
       </div>

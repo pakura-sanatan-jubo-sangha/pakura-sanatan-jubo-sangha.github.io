@@ -6,6 +6,8 @@ import {
   syncDataToGoogleSheets,
   syncStepByStepToGoogleSheets,
   syncViaAppsScriptWebhook,
+  testAppsScriptWebhook,
+  WebhookTestResult,
   getAppsScriptCodeTemplate,
   SHEET_NAMES,
 } from '../lib/sheetsService';
@@ -17,6 +19,7 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Link,
   PlusCircle,
   Layers,
@@ -52,6 +55,8 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
   );
   const [isSyncing, setIsSyncing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isTestingWebhook, setIsTestingWebhook] = useState(false);
+  const [webhookTestResult, setWebhookTestResult] = useState<WebhookTestResult | null>(null);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -69,6 +74,47 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
     currentUser.email?.toLowerCase().trim() === 'freelancerkajolchandradas@gmail.com' ||
     (currentUser.role === 'admin' && currentUser.isMainAdmin === true);
   const isAdmin = isAuthorizedSheetModifier;
+
+  // Test Webhook Live Health
+  const handleTestWebhook = async () => {
+    if (!appsScriptUrlInput.trim()) {
+      setSyncError(
+        language === 'bn'
+          ? 'অনুগ্রহ করে প্রথমে গুগল অ্যাপস স্ক্রিপ্ট ওয়েবহুক URL দিন।'
+          : 'Please enter a Google Apps Script Webhook URL first.'
+      );
+      return;
+    }
+    setIsTestingWebhook(true);
+    setWebhookTestResult(null);
+    setSyncError(null);
+    setSyncStatus(null);
+
+    try {
+      const res = await testAppsScriptWebhook(appsScriptUrlInput.trim());
+      setWebhookTestResult(res);
+
+      if (res.ok) {
+        setSyncStatus(
+          language === 'bn'
+            ? '✅ সংযোগ সফল! গুগল অ্যাপস স্ক্রিপ্ট ওয়েবহুক সক্রিয় এবং তথ্য গ্রহণ করতে প্রস্তুত।'
+            : '✅ Connection successful! Apps Script Webhook is active and responding.'
+        );
+      } else if (res.status === 401 || res.error === 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED') {
+        setSyncError(
+          language === 'bn'
+            ? '❌ গুগল ৪০১ (401 Unauthorized) এরর: গুগল স্ক্রিপ্ট ডিপ্লয়মেন্টের "Who has access" অপশনে "Anyone (যে কেউ)" নির্বাচন করা নেই!'
+            : '❌ Google 401 Unauthorized: "Who has access" must be set to "Anyone" in Deploy settings!'
+        );
+      } else {
+        setSyncError(res.message || (language === 'bn' ? 'সংযোগ পরীক্ষা ব্যর্থ হয়েছে।' : 'Webhook test failed.'));
+      }
+    } catch (e: any) {
+      setSyncError(e.message || (language === 'bn' ? 'সংযোগ পরীক্ষা করতে ব্যর্থ হয়েছে।' : 'Failed to test webhook.'));
+    } finally {
+      setIsTestingWebhook(false);
+    }
+  };
 
   // Step-by-step sync execution
   const handleStepByStepSync = async () => {
@@ -101,7 +147,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
     );
 
     try {
-      // If Apps Script Webhook is configured, sync through that as well
+      // If Apps Script Webhook is configured, sync through that
       if (appsScriptUrlInput.trim()) {
         setStepMessage(
           language === 'bn'
@@ -140,8 +186,29 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
       );
     } catch (err: any) {
       console.error('Sync Error:', err);
-      const isAuthErr =
+      const isAppsScript401 =
+        err?.code === 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED' ||
         err?.status === 401 ||
+        err?.message?.includes('401') ||
+        err?.message?.includes('Unauthorized');
+
+      if (isAppsScript401) {
+        setWebhookTestResult({
+          ok: false,
+          status: 401,
+          error: 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED',
+          message: 'গুগল স্ক্রিপ্ট অ্যাক্সেস ব্লক করেছে (401 Unauthorized)',
+          solution: 'Google Apps Script এ যান -> Deploy -> Manage deployments -> Edit (পেন্সিল আইকন) -> "Who has access" এ "Anyone" নির্বাচন করে Deploy বাটনে চাপুন।',
+        });
+        setSyncError(
+          language === 'bn'
+            ? 'গুগল স্ক্রিপ্ট ডিপ্লয়মেন্ট ৪০১ (401 Unauthorized) এরর দিয়েছে: গুগল স্ক্রিপ্ট সেটিংসে "Who has access" অপশন "Anyone (যে কেউ)" করা নেই। ফলে গুগল ডাটা প্রবেশ আটকে দিয়েছে। নিচে ৩-ধাপের সমাধান নির্দেশিকা দেখুন।'
+            : 'Google Apps Script returned 401 Unauthorized: "Who has access" must be set to "Anyone" in Deploy settings! Please follow the 3-step solution below.'
+        );
+        return;
+      }
+
+      const isAuthErr =
         err?.code === 'UNAUTHENTICATED' ||
         err?.message?.includes('invalid authentication credentials') ||
         err?.message?.includes('UNAUTHENTICATED');
@@ -546,7 +613,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
             </button>
           </div>
 
-          <div className="mt-2.5 flex gap-2">
+          <div className="mt-2.5 flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               placeholder="https://script.google.com/macros/s/.../exec"
@@ -554,13 +621,106 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
               onChange={(e) => setAppsScriptUrlInput(e.target.value)}
               className="flex-1 px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-900 dark:text-white font-mono"
             />
-            <button
-              onClick={handleSaveAppsScriptUrl}
-              className="px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
-            >
-              {language === 'bn' ? 'সংরক্ষণ' : 'Save URL'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveAppsScriptUrl}
+                className="px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
+              >
+                {language === 'bn' ? 'সংরক্ষণ' : 'Save URL'}
+              </button>
+              <button
+                onClick={handleTestWebhook}
+                disabled={isTestingWebhook || !appsScriptUrlInput.trim()}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingWebhook ? 'animate-spin' : ''}`} />
+                <span>
+                  {isTestingWebhook
+                    ? language === 'bn'
+                      ? 'যাচাই হচ্ছে...'
+                      : 'Testing...'
+                    : language === 'bn'
+                    ? 'সংযোগ পরীক্ষা'
+                    : 'Test Webhook'}
+                </span>
+              </button>
+            </div>
           </div>
+
+          {/* Webhook 401 Unauthorized Diagnostic & Instant Fix Guide */}
+          {(webhookTestResult?.status === 401 ||
+            webhookTestResult?.error === 'GOOGLE_APPS_SCRIPT_401_UNAUTHORIZED' ||
+            syncError?.includes('401') ||
+            syncError?.includes('Unauthorized')) && (
+            <div className="mt-3.5 p-4 rounded-xl bg-red-50 dark:bg-red-950/40 border-2 border-red-300 dark:border-red-800 text-xs text-red-900 dark:text-red-200 space-y-3 animate-in fade-in">
+              <div className="flex items-center gap-2 font-bold text-red-800 dark:text-red-300 text-sm">
+                <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                <span>
+                  {language === 'bn'
+                    ? 'গুগল ৪০১ (401 Unauthorized) এরর সনাক্ত হয়েছে — গুগল শিটে ডাটা সেভ আটকে আছে!'
+                    : 'Google 401 Unauthorized Detected — Sheets Sync is Blocked!'}
+                </span>
+              </div>
+              <p className="text-[12px] leading-relaxed">
+                {language === 'bn'
+                  ? 'গুগল স্ক্রিপ্ট ডিপ্লয়মেন্টের অ্যাক্সেস সেটিংসে "Who has access (কার অ্যাক্সেস আছে)" অপশনটি "Anyone (যে কেউ)" করা নেই। এটি "Only myself" থাকার কারণে গুগল আপনার ওয়েবসাইট থেকে ডাটা পাঠানো স্বয়ংক্রিয়ভাবে ব্লক করে দিচ্ছে।'
+                  : 'In Google Apps Script deployment settings, "Who has access" is not set to "Anyone". As a result, Google is blocking all sync requests with 401 Unauthorized.'}
+              </p>
+              <div className="bg-white/90 dark:bg-slate-900/90 p-3.5 rounded-xl border border-red-200 dark:border-red-800/80 space-y-2.5 shadow-2xs">
+                <p className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <span>{language === 'bn' ? 'মাত্র ৩ ক্লিকে সমাধান করুন:' : 'Fix in 3 Quick Steps:'}</span>
+                </p>
+                <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
+                  <li>
+                    {language === 'bn'
+                      ? 'আপনার গুগল শিটে যান এবং মেনু থেকে Extensions > Apps Script খুলুন'
+                      : 'Open your Google Sheet and click Extensions > Apps Script'}
+                  </li>
+                  <li>
+                    {language === 'bn'
+                      ? 'উপরের ডানপাশের নীল "Deploy (ডিপ্লয়)" বাটনে চাপুন এবং "Manage deployments (ডিপ্লয়মেন্ট পরিচালনা)" নির্বাচন করুন'
+                      : 'Click the blue "Deploy" button at top-right and choose "Manage deployments"'}
+                  </li>
+                  <li>
+                    {language === 'bn'
+                      ? 'বর্তমান Web app-এর ডানপাশের Edit (পেন্সিল আইকন) চাপুন -> "Who has access" অপশনে অবশ্যই "Anyone (যে কেউ)" নির্বাচন করে "Deploy" চাপুন!'
+                      : 'Click Edit (pencil icon) next to Web app -> Set "Who has access" to "Anyone" -> Click "Deploy"!'}
+                  </li>
+                </ol>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestWebhook}
+                  disabled={isTestingWebhook}
+                  className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isTestingWebhook ? 'animate-spin' : ''}`} />
+                  <span>{language === 'bn' ? 'পুনরায় সংযোগ পরীক্ষা করুন' : 'Retest Connection'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowScriptModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-red-300 dark:border-red-700 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-100"
+                >
+                  {language === 'bn' ? 'স্ক্রিপ্ট কোড ও গাইড দেখুন' : 'View Script Code & Guide'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Webhook Active Success Badge */}
+          {webhookTestResult?.ok && (
+            <div className="mt-3 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2 animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <span className="font-medium">
+                {language === 'bn'
+                  ? 'গুগল অ্যাপস স্ক্রিপ্ট ওয়েবহুক সক্রিয় এবং তথ্য গ্রহণ করতে প্রস্তুত!'
+                  : 'Apps Script Webhook is active and ready to receive data!'}
+              </span>
+            </div>
+          )}
         </div>
 
         {lastSyncDate && (

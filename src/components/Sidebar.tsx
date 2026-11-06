@@ -31,6 +31,7 @@ import {
   Phone,
   Bell,
   Coins,
+  MessageSquare,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -82,10 +83,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       currentUser.userId === 'USR-MAIN-ADMIN');
 
   // Role-specific navigation items:
-  // When not logged in (isViewOnly), ONLY Home or Dashboard appears in the navigation menu!
+  // When not logged in (isViewOnly), Home Dashboard is hidden until login!
   const navItems = isViewOnly
     ? [
-        { id: 'dashboard', label: language === 'bn' ? 'ড্যাশবোর্ড' : 'Dashboard', icon: LayoutDashboard },
+        { id: 'dashboard', label: language === 'bn' ? 'লগইন করুন (লক)' : 'Login Required', icon: Lock },
       ]
     : isMember
     ? [
@@ -97,6 +98,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'income', label: language === 'bn' ? 'আয় বিবরণী' : 'Income Details', icon: ArrowDownRight },
         { id: 'expenses', label: language === 'bn' ? 'ব্যয় বিবরণী' : 'Expense Details', icon: ArrowUpRight },
         { id: 'transactions', label: language === 'bn' ? 'ব্যাংক হিসাব ও লেনদেন খতিয়ান' : 'Bank Ledger & Transactions', icon: BookOpen },
+        { id: 'chat', label: language === 'bn' ? 'কমিউনিটি চ্যাট ও বার্তা' : 'Community Chat', icon: MessageSquare },
         { id: 'admin_rules', label: language === 'bn' ? 'সংবিধিবদ্ধ নিয়মাবলী' : 'Rules & Regulations', icon: Scale },
       ]
     : [
@@ -110,6 +112,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Coins,
           badge: pendingWithdrawalsCount,
         },
+        { id: 'chat', label: language === 'bn' ? 'কমিউনিটি চ্যাট ও বার্তা' : 'Community Chat', icon: MessageSquare },
         { id: 'income', label: language === 'bn' ? 'আয় বিবরণী' : 'Income Details', icon: ArrowDownRight },
         { id: 'expenses', label: language === 'bn' ? 'ব্যয় বিবরণী' : 'Expense Details', icon: ArrowUpRight },
         { id: 'transactions', label: t.navTransactions, icon: BookOpen },
@@ -125,6 +128,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ];
 
   const handleSelect = (id: string) => {
+    if (isViewOnly) {
+      if (onOpenLoginModal) onOpenLoginModal();
+      if (onCloseMobile) onCloseMobile();
+      return;
+    }
     if (id === 'notifications') {
       if (onOpenNotifications) onOpenNotifications();
     } else {

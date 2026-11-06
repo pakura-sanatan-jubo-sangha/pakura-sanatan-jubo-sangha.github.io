@@ -241,6 +241,20 @@ export interface NotificationItem {
   createdAt: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'admin' | 'member';
+  senderPhone?: string;
+  senderEmail?: string;
+  text: string;
+  imageUrl?: string;
+  imageFileName?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface ActivityLogItem {
   logId: string;
   dateTime: string;

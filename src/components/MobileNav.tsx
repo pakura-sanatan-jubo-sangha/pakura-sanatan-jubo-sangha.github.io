@@ -10,6 +10,8 @@ import {
   User,
   Phone,
   Key,
+  Lock,
+  MessageSquare,
 } from 'lucide-react';
 
 interface MobileNavProps {
@@ -42,18 +44,31 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 lg:hidden px-3 py-1.5 flex items-center justify-around shadow-lg print:hidden">
-      {/* 1. Home - Always visible with slight zoom effect */}
+      {/* 1. Home / Login - Visible on Mobile */}
       <button
-        onClick={() => onSelectTab('dashboard')}
+        onClick={() => {
+          if (!isLoggedIn) {
+            if (onOpenLogin) onOpenLogin();
+            else if (onOpenMemberLogin) onOpenMemberLogin();
+          } else {
+            onSelectTab('dashboard');
+          }
+        }}
         className={`group flex flex-col items-center gap-0.5 p-1 rounded-xl text-[10px] font-medium transition-all duration-200 transform hover:scale-110 active:scale-95 cursor-pointer ${
           currentTab === 'dashboard'
             ? 'text-amber-600 dark:text-amber-400 font-bold'
             : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
         }`}
-        title={language === 'bn' ? 'ড্যাশবোর্ড' : 'Dashboard'}
+        title={isLoggedIn ? (language === 'bn' ? 'ড্যাশবোর্ড' : 'Dashboard') : (language === 'bn' ? 'লগইন করুন' : 'Login Required')}
       >
-        <LayoutDashboard className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
-        <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'হোম' : 'Home'}</span>
+        {isLoggedIn ? (
+          <LayoutDashboard className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
+        ) : (
+          <Lock className="w-5 h-5 transition-transform duration-200 group-hover:scale-115 text-amber-600 dark:text-amber-400" />
+        )}
+        <span className="transition-transform duration-200 group-hover:scale-105">
+          {isLoggedIn ? (language === 'bn' ? 'হোম' : 'Home') : (language === 'bn' ? 'লগইন' : 'Login')}
+        </span>
       </button>
 
       {/* Without logging in: Unified Login Option */}
@@ -132,6 +147,20 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           >
             <CreditCard className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
             <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'ঋণ' : 'Loans'}</span>
+          </button>
+
+          {/* Shared Community Space & Chat */}
+          <button
+            onClick={() => onSelectTab('chat')}
+            className={`group flex flex-col items-center gap-0.5 p-1 rounded-xl text-[10px] font-medium transition-all duration-200 transform hover:scale-110 active:scale-95 cursor-pointer ${
+              currentTab === 'chat'
+                ? 'text-amber-600 dark:text-amber-400 font-bold'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+            }`}
+            title={language === 'bn' ? 'কমিউনিটি চ্যাট ও বার্তা' : 'Community Chat'}
+          >
+            <MessageSquare className="w-5 h-5 transition-transform duration-200 group-hover:scale-115 text-emerald-600 dark:text-emerald-400" />
+            <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'চ্যাট' : 'Chat'}</span>
           </button>
 
           {/* Logout */}
