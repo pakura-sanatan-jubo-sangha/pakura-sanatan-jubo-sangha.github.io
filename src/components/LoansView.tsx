@@ -478,9 +478,7 @@ export const LoansView: React.FC<LoansViewProps> = ({
                 {language === 'bn' ? 'হিসাব স্থিতি:' : 'Status:'}
               </span>
               <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                {myLinkedMembers.length > 1
-                  ? (language === 'bn' ? `${myLinkedMembers.length}টি অ্যাকাউন্ট সম্মিলিত` : `${myLinkedMembers.length} accounts`)
-                  : (language === 'bn' ? 'শুধুমাত্র আপনার হিসাব ✓' : 'Personal ledger ✓')}
+                {language === 'bn' ? 'সক্রিয় হিসাব ✓' : 'Active Account ✓'}
               </span>
             </div>
           )}

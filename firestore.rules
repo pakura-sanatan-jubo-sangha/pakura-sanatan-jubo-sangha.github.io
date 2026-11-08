@@ -141,6 +141,12 @@ service cloud.firestore {
       allow create, update, delete: if true;
     }
 
+    // 6b. Borrowers
+    match /borrowers/{borrowerId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
+
     // 7. Member Withdrawals
     match /member_withdrawals/{withdrawalId} {
       allow get, list: if true;

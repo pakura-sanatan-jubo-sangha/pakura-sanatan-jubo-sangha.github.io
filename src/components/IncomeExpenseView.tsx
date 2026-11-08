@@ -50,25 +50,33 @@ export const IncomeExpenseView: React.FC<IncomeExpenseViewProps> = ({
   const [note, setNote] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [customCategory, setCustomCategory] = useState<string>('');
 
   const canManage = currentUser.role === 'admin';
 
   const incomeCategories = [
     'অনুদান (Donation)',
     'অনুষ্ঠান স্পন্সর (Sponsorship)',
+    'সমিতির নিজস্ব মূলধন ও তহবিল (Association Capital/Funds)',
+    'সদস্য ভর্তি ফি (Membership Admission)',
     'জরিমানা (Fine/Late Fee)',
     'ব্যাংক সুদ (Bank Interest)',
     'বিবিধ আয় (Miscellaneous)',
+    'অন্যান্য খাত (Other Income)',
   ];
 
   const expenseCategories = [
+    'গ্যাস ও জ্বালানি বিল (Gas & Utility Bills)',
+    'বিদ্যুৎ ও পানি বিল (Electricity & Water Bills)',
+    'অফিস ও ঘর ভাড়া (Office Rent)',
     'জার্সি ও টি-শার্ট ক্রয় (Jerseys & T-Shirts)',
-    'মিটিং নাস্তা (Refreshments)',
+    'মিটিং নাস্তা ও আপ্যায়ন (Refreshments)',
     'কাগজপত্র ও প্রিন্টিং (Stationery & Print)',
     'পূজা ও ধর্মীয় উৎসব (Religious Festival)',
     'দান ও সামাজিক সহায়তা (Charity & Social)',
     'যোগাযোগ ও পরিবহন (Transport/Comm)',
     'বিবিধ খরচ (Miscellaneous)',
+    'অন্যান্য খাত (Other Expense)',
   ];
 
   const categories = isIncome ? incomeCategories : expenseCategories;
@@ -89,16 +97,20 @@ export const IncomeExpenseView: React.FC<IncomeExpenseViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (amount <= 0 || !category) return;
+    const effectiveCategory = category.startsWith('অন্যান্য') && customCategory.trim()
+      ? customCategory.trim()
+      : category;
+    if (amount <= 0 || !effectiveCategory) return;
     onAddItem({
       amount,
       date,
-      category,
+      category: effectiveCategory,
       paymentMethod: method,
       person: person.trim(),
       note: note.trim(),
     });
     setAmount(0);
+    setCustomCategory('');
     setNote('');
     setShowModal(false);
   };
@@ -308,6 +320,22 @@ export const IncomeExpenseView: React.FC<IncomeExpenseViewProps> = ({
                   />
                 </div>
               </div>
+
+              {category.startsWith('অন্যান্য') && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    {language === 'bn' ? 'কাস্টম খাতের নাম লিখুন' : 'Enter Custom Category Name'} <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={language === 'bn' ? 'যেমন: গ্যাস ও জ্বালানি বিল' : 'e.g., Gas & Utility Bills'}
+                    value={customCategory}
+                    onChange={(e) => setCustomCategory(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">

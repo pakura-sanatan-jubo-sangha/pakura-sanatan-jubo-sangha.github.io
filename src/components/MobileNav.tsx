@@ -37,7 +37,13 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   onOpenAdminLogin,
   onLogout,
 }) => {
-  const isLoggedIn = currentUser.userId !== 'USR-VIEW-ONLY' && currentUser.userId !== 'guest';
+  const isLoggedIn = currentUser.userId !== 'USR-VIEW-ONLY' && currentUser.userId !== 'guest' && !currentUser.isGuest;
+
+  // When a user is not logged in, the mobile/tablet bottom nav elements are hidden completely.
+  // Once logged in, everything returns to exactly how it was before.
+  if (!isLoggedIn) {
+    return null;
+  }
 
   const handleMemberLoginClick = onOpenMemberLogin || onOpenLogin || (() => {});
   const handleAdminLoginClick = onOpenAdminLogin || onOpenLogin || (() => {});

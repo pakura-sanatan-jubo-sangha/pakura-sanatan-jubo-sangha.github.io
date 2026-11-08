@@ -114,7 +114,12 @@ export default function App() {
 
   const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
   const isMember = currentUser.role === 'member' && !isViewOnly;
-  const isAdmin = currentUser.role === 'admin';
+  const isAuthorizedMainAdmin =
+    currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
+    currentUser.isMainAdmin === true ||
+    currentUser.userId === 'USR-MAIN-ADMIN' ||
+    currentUser.userId === 'USR-000001';
+  const isAdmin = currentUser.role === 'admin' || isAuthorizedMainAdmin;
 
   // Public vs Private Interface separation:
   // Public visitors ALWAYS land on the Public Website.
@@ -268,7 +273,35 @@ export default function App() {
         if (!isMounted) return;
         if (cloudData && Object.keys(cloudData).length > 0) {
           StorageService.mergeCloudData(cloudData);
-          setAppData(StorageService.getAppData());
+          const current = StorageService.getAppData();
+          setAppData(current);
+
+          // Backfill any newly recorded items to Firestore that are missing in cloud
+          const cloudResetTime = Number((cloudData as any)?.cloudResetTimestamp || 0);
+
+          const cloudConIds = new Set((cloudData.contributions || []).map((c) => c.contributionId));
+          current.contributions.forEach((c) => {
+            const t = c.createdAt ? new Date(c.createdAt).getTime() : 0;
+            if (t > cloudResetTime && !cloudConIds.has(c.contributionId)) {
+              FirebaseSyncService.syncContribution(c).catch(() => {});
+            }
+          });
+
+          const cloudExpIds = new Set((cloudData.expenses || []).map((e) => e.expenseId));
+          current.expenses.forEach((e) => {
+            const t = e.createdAt ? new Date(e.createdAt).getTime() : 0;
+            if (t > cloudResetTime && !cloudExpIds.has(e.expenseId)) {
+              FirebaseSyncService.syncExpense(e).catch(() => {});
+            }
+          });
+
+          const cloudIncIds = new Set((cloudData.incomes || []).map((i) => i.incomeId));
+          current.incomes.forEach((i) => {
+            const t = i.createdAt ? new Date(i.createdAt).getTime() : 0;
+            if (t > cloudResetTime && !cloudIncIds.has(i.incomeId)) {
+              FirebaseSyncService.syncIncome(i).catch(() => {});
+            }
+          });
         }
         if (!cloudData?.settings) {
           FirebaseSyncService.syncSettings(StorageService.getSettings()).catch(() => {});
@@ -538,7 +571,8 @@ export default function App() {
     month: string,
     method: PaymentMethod,
     contributionType?: 'regular' | 'seasonal_booster',
-    notes?: string
+    notes?: string,
+    lateFee?: number
   ) => {
     if (!isAdmin) {
       showToast(language === 'bn' ? 'শুধুমাত্র প্রধান অ্যাডমিন চাঁদা গ্রহণ করতে পারেন।' : 'Only Admin can record contributions.');
@@ -551,9 +585,27 @@ export default function App() {
       method,
       currentUser,
       contributionType,
-      notes
+      notes,
+      lateFee
     );
     setAppData(result.data);
+
+    // Direct push to Firebase Cloud Firestore for instant persistence
+    if (result.contribution) {
+      FirebaseSyncService.syncContribution(result.contribution).catch(console.error);
+    }
+    const updatedMember = result.data.members.find((m) => m.systemId === memberSystemId);
+    if (updatedMember) {
+      FirebaseSyncService.syncMember(updatedMember).catch(console.error);
+    }
+    if (result.receipt) {
+      FirebaseSyncService.syncReceipt(result.receipt).catch(console.error);
+    }
+    const latestTrx = result.data.transactions?.[0];
+    if (latestTrx) {
+      FirebaseSyncService.syncTransaction(latestTrx).catch(console.error);
+    }
+
     const typeText = language === 'bn' ? 'মাসিক সঞ্চয়' : 'Monthly Savings';
     showToast(
       language === 'bn'
@@ -569,7 +621,8 @@ export default function App() {
     memberSystemIds: string[],
     amount: number,
     month: string,
-    method: PaymentMethod
+    method: PaymentMethod,
+    lateFeePerMember?: number
   ) => {
     if (!isAdmin) {
       showToast(language === 'bn' ? 'শুধুমাত্র প্রধান অ্যাডমিন চাঁদা গ্রহণ করতে পারেন।' : 'Only Admin can record contributions.');
@@ -580,9 +633,24 @@ export default function App() {
       amount,
       month,
       method,
-      currentUser.displayName
+      currentUser.displayName,
+      lateFeePerMember
     );
     setAppData(updated);
+
+    // Direct push to Firebase Cloud Firestore for bulk entries
+    for (const sid of memberSystemIds) {
+      const m = updated.members.find((x) => x.systemId === sid);
+      if (m) FirebaseSyncService.syncMember(m).catch(console.error);
+      const con = updated.contributions.find((c) => c.memberSystemId === sid && c.month === month);
+      if (con) FirebaseSyncService.syncContribution(con).catch(console.error);
+    }
+    if (updated.transactions && updated.transactions.length > 0) {
+      for (let i = 0; i < memberSystemIds.length && i < updated.transactions.length; i++) {
+        FirebaseSyncService.syncTransaction(updated.transactions[i]).catch(console.error);
+      }
+    }
+
     showToast(
       language === 'bn'
         ? `${memberSystemIds.length} জন সদস্যের চাঁদা সফলভাবে জমা হয়েছে!`
@@ -702,7 +770,7 @@ export default function App() {
       return;
     }
     if (type === 'income') {
-      StorageService.addIncome(
+      const newInc = StorageService.addIncome(
         data.category as any,
         data.amount,
         data.date,
@@ -710,9 +778,10 @@ export default function App() {
         data.paymentMethod,
         currentUser
       );
+      FirebaseSyncService.syncIncome(newInc).catch(console.error);
       showToast(language === 'bn' ? `৳${data.amount} আয় সফলভাবে জমা হয়েছে!` : `Recorded ৳${data.amount} income!`);
     } else {
-      StorageService.addExpense(
+      const newExp = StorageService.addExpense(
         data.category as any,
         data.amount,
         data.date,
@@ -720,10 +789,15 @@ export default function App() {
         data.paymentMethod,
         currentUser
       );
+      FirebaseSyncService.syncExpense(newExp).catch(console.error);
       showToast(language === 'bn' ? `৳${data.amount} ব্যয় লিপিবদ্ধ হয়েছে!` : `Recorded ৳${data.amount} expense!`);
     }
     const refreshed = StorageService.getAppData();
     setAppData(refreshed);
+    const latestTrx = refreshed.transactions?.[0];
+    if (latestTrx) {
+      FirebaseSyncService.syncTransaction(latestTrx).catch(console.error);
+    }
     triggerAutoSaveToGoogleSheets(refreshed);
   };
 
@@ -1316,6 +1390,7 @@ export default function App() {
                 onViewReceipt={handleViewReceipt}
                 onOpenAddMember={() => setCurrentTab('members')}
                 onOpenLoginModal={() => setAuthModalState({ isOpen: true, mode: 'admin_login' })}
+                onNavigateTab={(tab) => setCurrentTab(tab as any)}
               />
             )
           )}
@@ -1571,18 +1646,20 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile Bottom Bar Navigation */}
-      <MobileNav
-        currentUser={currentUser}
-        language={language}
-        currentTab={currentTab}
-        onSelectTab={setCurrentTab}
-        onOpenLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-        onOpenRegister={() => setAuthModalState({ isOpen: true, mode: 'register' })}
-        onOpenMemberLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-        onOpenAdminLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-        onLogout={handleLogout}
-      />
+      {/* Mobile Bottom Bar Navigation: Hidden when not logged in; returns when logged in */}
+      {!isViewOnly && (
+        <MobileNav
+          currentUser={currentUser}
+          language={language}
+          currentTab={currentTab}
+          onSelectTab={setCurrentTab}
+          onOpenLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
+          onOpenRegister={() => setAuthModalState({ isOpen: true, mode: 'register' })}
+          onOpenMemberLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
+          onOpenAdminLogin={() => setAuthModalState({ isOpen: true, mode: 'login' })}
+          onLogout={handleLogout}
+        />
+      )}
 
       {/* Member Registration & Login Modal */}
       <AuthModal

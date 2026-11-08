@@ -49,6 +49,7 @@ interface ContributionsViewProps {
   onViewReceipt: (receiptId: string) => void;
   onOpenAddMember?: () => void;
   onOpenLoginModal?: () => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 export const ContributionsView: React.FC<ContributionsViewProps> = ({
@@ -64,6 +65,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
   onViewReceipt,
   onOpenAddMember,
   onOpenLoginModal,
+  onNavigateTab,
 }) => {
   const t = getTranslation(language);
   const canManage = currentUser.role === 'admin';
@@ -249,19 +251,20 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
   const selectedYear = parseInt(selectedMonth?.split('-')[0], 10) || 2025;
   const selectedMonthNum = selectedMonth?.split('-')[1] || '10';
 
-  // Filter available months for the selected year (for 2025, Samiti began in October 2025)
+  // 12 months for selected year
   const currentYearMonthOptions = useMemo(() => {
-    const startM = selectedYear === 2025 ? 10 : 1;
-    return MONTHS_OPTIONS.filter((m) => parseInt(m.num, 10) >= startM);
-  }, [selectedYear, MONTHS_OPTIONS]);
+    return MONTHS_OPTIONS;
+  }, [MONTHS_OPTIONS]);
 
+  // Calculate Year Total across all 12 months of selectedYear
+  const yearTotal = useMemo(() => {
+    return contributions
+      .filter((c) => c.month?.startsWith(String(selectedYear)))
+      .reduce((sum, c) => sum + (c.amount || 0), 0);
+  }, [contributions, selectedYear]);
 
   const handleYearChange = (newYear: number) => {
-    let newM = selectedMonthNum;
-    if (newYear === 2025 && parseInt(newM, 10) < 10) {
-      newM = '10';
-    }
-    const newMonth = `${newYear}-${newM}`;
+    const newMonth = `${newYear}-${selectedMonthNum}`;
     setSelectedMonth(newMonth);
     setSelectedMemberIds([]);
   };
@@ -422,6 +425,30 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {onNavigateTab && (
+            <>
+              <button
+                type="button"
+                onClick={() => onNavigateTab('income')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/40 text-xs font-semibold shadow-2xs cursor-pointer transition-all"
+                title={language === 'bn' ? 'সমিতির নিজস্ব মূলধন বা অনুদান তহবিল জমা করুন' : 'Add Association Fund or Donation'}
+              >
+                <PlusCircle className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                <span>{language === 'bn' ? '+ তহবিল / অনুদান' : '+ Add Fund'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onNavigateTab('expenses')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-xs font-semibold shadow-2xs cursor-pointer transition-all"
+                title={language === 'bn' ? 'গ্যাস বিল, ইউটিলিটি বা সমিতির খরচ পরিশোধ করুন' : 'Record Gas Bill or Utility Expense'}
+              >
+                <PlusCircle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>{language === 'bn' ? '+ গ্যাস / খরচ বিল' : '+ Gas / Bill'}</span>
+              </button>
+            </>
+          )}
+
           {/* History Icon Button to view all past and current month payment records */}
           <button
             type="button"
@@ -488,6 +515,99 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
         </div>
       </div>
 
+
+      {/* Monthly Savings Payments for {selectedYear} (12-Month Calendar Grid matching screenshot) */}
+      <div className="rounded-3xl p-5 sm:p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0"></span>
+            <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white">
+              {language === 'bn' ? `${selectedYear} সালের মাসিক সঞ্চয় আদায় বিবরণী` : `Monthly Savings Payments for ${selectedYear}`}
+            </h3>
+          </div>
+          <div className="text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-300">
+            {language === 'bn' ? 'বার্ষিক মোট: ' : 'Year Total: '}
+            <span className="font-black text-emerald-600 dark:text-emerald-400">
+              ৳{yearTotal.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {/* 12-Month Cards Grid (4 columns on lg, 3 on sm, 2 on mobile) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {MONTHS_OPTIONS.map((m) => {
+            const mKey = `${selectedYear}-${m.num}`;
+            const isSelected = selectedMonth === mKey;
+            const mCons = contributions.filter((c) => c.month === mKey);
+            const mTotal = mCons.reduce((sum, c) => sum + (c.amount || 0), 0);
+            const isFull =
+              (mCons.length >= activeMembers.length && activeMembers.length > 0) ||
+              (mTotal >= activeMembers.length * currentExpectedPerMember && mTotal > 0);
+            const isPartial = mTotal > 0 && !isFull;
+
+            return (
+              <button
+                key={m.num}
+                type="button"
+                onClick={() => handleMonthChange(m.num)}
+                className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[96px] ${
+                  isSelected
+                    ? 'bg-emerald-800 text-white border-emerald-700 shadow-md ring-2 ring-emerald-500/30'
+                    : isFull
+                    ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800 text-slate-900 dark:text-white hover:border-emerald-500'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
+                    {language === 'bn' ? m.name_bn : m.name_en}
+                  </span>
+                  <span className={`text-[11px] font-mono ${isSelected ? 'text-emerald-200' : 'text-slate-400 dark:text-slate-500'}`}>
+                    {m.num}
+                  </span>
+                </div>
+
+                <div className="flex items-end justify-between w-full mt-3">
+                  <span
+                    className={`text-sm font-extrabold ${
+                      isSelected
+                        ? 'text-white'
+                        : mTotal > 0
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    ৳{mTotal.toLocaleString()}
+                  </span>
+                  <span
+                    className={`text-[10px] font-semibold ${
+                      isSelected
+                        ? 'text-emerald-100'
+                        : isFull
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : isPartial
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-slate-400 dark:text-slate-500'
+                    }`}
+                  >
+                    {isFull
+                      ? language === 'bn'
+                        ? '✓ সম্পূর্ণ'
+                        : '✓ Full'
+                      : isPartial
+                      ? language === 'bn'
+                        ? 'আংশিক'
+                        : 'Partial'
+                      : language === 'bn'
+                      ? 'বকেয়া'
+                      : 'Pending'}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Monthly Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

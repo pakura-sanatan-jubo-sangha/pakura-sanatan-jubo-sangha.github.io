@@ -42,7 +42,7 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
 
   // Filter contributions for this member (and linked accounts)
   const allMyContributions = contributions
-    .filter((c) => systemIds.includes(c.memberSystemId) && c && c.month && !c.month.startsWith('2025-'))
+    .filter((c) => systemIds.includes(c.memberSystemId) && c && c.month)
     .sort((a, b) => (b.month || '').localeCompare(a.month || ''));
 
   const myContributions = selectedAccountId === 'all'
@@ -137,12 +137,6 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
             <div className="flex items-center gap-2 text-emerald-100 text-xs font-semibold uppercase tracking-wider">
               <PiggyBank className="w-4 h-4" />
               <span>{language === 'bn' ? 'সঞ্চয় হিসাব ও জমার খতিয়ান' : 'Savings & Ledger'}</span>
-              {linkedMembers.length > 1 && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/40 text-[10px] font-bold border border-emerald-300/40 flex items-center gap-1">
-                  <Layers className="w-3 h-3" />
-                  <span>{linkedMembers.length} {language === 'bn' ? 'টি অ্যাকাউন্ট সংযুক্ত' : 'Linked Accounts'}</span>
-                </span>
-              )}
             </div>
             <h2 className="text-xl sm:text-2xl font-bold mt-1 text-white tracking-tight">
               {member.name}
@@ -188,40 +182,6 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
         </div>
       </div>
 
-      {/* Linked Accounts Switcher (if multiple accounts linked to same person) */}
-      {linkedMembers.length > 1 && (
-        <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center gap-2 overflow-x-auto shadow-2xs">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap pl-1">
-            {language === 'bn' ? 'অ্যাকাউন্ট নির্বাচন:' : 'Select Account:'}
-          </span>
-          <button
-            type="button"
-            onClick={() => setSelectedAccountId('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-              selectedAccountId === 'all'
-                ? 'bg-emerald-600 text-white shadow-2xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
-            }`}
-          >
-            {language === 'bn' ? `সকল অ্যাকাউন্ট (সম্মিলিত - ${linkedMembers.length}টি)` : `All Linked Accounts (${linkedMembers.length})`}
-          </button>
-          {linkedMembers.map((lm, idx) => (
-            <button
-              key={lm.systemId}
-              type="button"
-              onClick={() => setSelectedAccountId(lm.systemId)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-                selectedAccountId === lm.systemId
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              <span>{lm.name}</span>
-              <span className="text-[10px] opacity-80">(৳{lm.currentBalance || 0})</span>
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* 2. Four Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">

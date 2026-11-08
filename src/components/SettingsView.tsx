@@ -767,7 +767,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             type="button"
             onClick={() => {
               setShowResetConfirm(true);
-              setResetConfirmEmail('');
+              setResetConfirmEmail(currentUser.email || 'freelancerkajolchandradas@gmail.com');
               setResetEmailError(null);
             }}
             className="px-4 py-2 rounded-xl text-xs font-bold bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/40 dark:hover:bg-red-900/50 dark:text-red-300 border border-red-200 dark:border-red-800 transition-all cursor-pointer self-start sm:self-auto shrink-0 shadow-2xs"

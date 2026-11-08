@@ -226,30 +226,6 @@ export class StorageService {
         }
       }
 
-      // Sanitize contributions cache against erroneous legacy test entries (such as 2025-10)
-      const rawC = localStorage.getItem(STORAGE_KEYS.CONTRIBUTIONS);
-      if (rawC) {
-        try {
-          const parsed: Contribution[] = JSON.parse(rawC);
-          if (Array.isArray(parsed)) {
-            const cleanList = parsed.filter((c) => c && c.month && !c.month.startsWith('2025-'));
-            localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(cleanList));
-          }
-        } catch {}
-      }
-
-      // Sanitize receipts cache against erroneous legacy test entries
-      const rawR = localStorage.getItem(STORAGE_KEYS.RECEIPTS);
-      if (rawR) {
-        try {
-          const parsedR = JSON.parse(rawR);
-          if (Array.isArray(parsedR)) {
-            const cleanR = parsedR.filter((r) => r && (!r.month || !r.month.startsWith('2025-')));
-            localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(cleanR));
-          }
-        } catch {}
-      }
-
       // Automatically reconcile ledger so member balances match their net contributions
       this.synchronizeMemberBalances();
     } catch {
@@ -327,6 +303,46 @@ export class StorageService {
         }
       } catch {}
 
+      const localResetTime = Number(localStorage.getItem('pakura_last_reset_timestamp') || 0);
+      const cloudResetTime = Number((cloudData as any)?.cloudResetTimestamp || 0);
+      const isCloudResetNewer = cloudResetTime > localResetTime;
+
+      if (isCloudResetNewer) {
+        const filterNewer = (rawKey: string) => {
+          const raw = localStorage.getItem(rawKey);
+          if (!raw) return [];
+          try {
+            const arr = JSON.parse(raw);
+            if (!Array.isArray(arr)) return [];
+            return arr.filter((x: any) => {
+              const t = x?.createdAt ? new Date(x.createdAt).getTime() : 0;
+              return t > cloudResetTime;
+            });
+          } catch {
+            return [];
+          }
+        };
+
+        localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(filterNewer(STORAGE_KEYS.CONTRIBUTIONS)));
+        localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(filterNewer(STORAGE_KEYS.RECEIPTS)));
+        localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(filterNewer(STORAGE_KEYS.TRANSACTIONS)));
+        localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify(filterNewer(STORAGE_KEYS.LOANS)));
+        localStorage.setItem(STORAGE_KEYS.BORROWERS, JSON.stringify(filterNewer(STORAGE_KEYS.BORROWERS)));
+        localStorage.setItem(STORAGE_KEYS.LOAN_PAYMENTS, JSON.stringify(filterNewer(STORAGE_KEYS.LOAN_PAYMENTS)));
+        localStorage.setItem(STORAGE_KEYS.INCOME, JSON.stringify(filterNewer(STORAGE_KEYS.INCOME)));
+        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(filterNewer(STORAGE_KEYS.EXPENSES)));
+        localStorage.setItem(STORAGE_KEYS.PROFIT_DISTRIBUTIONS, JSON.stringify(filterNewer(STORAGE_KEYS.PROFIT_DISTRIBUTIONS)));
+        localStorage.setItem(STORAGE_KEYS.MEMBER_WITHDRAWALS, JSON.stringify(filterNewer(STORAGE_KEYS.MEMBER_WITHDRAWALS)));
+        localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
+        localStorage.setItem(STORAGE_KEYS.RULES, JSON.stringify([]));
+        localStorage.setItem(STORAGE_KEYS.MEETINGS, JSON.stringify([]));
+        try {
+          localStorage.removeItem('psys_shared_chat_messages_v1');
+        } catch {}
+        localStorage.setItem('pakura_last_reset_timestamp', String(cloudResetTime));
+      }
+
+      // 1. Members
       if (cloudData.members && cloudData.members.length > 0) {
         const localMembers = this.getMembers();
         const map = new Map<string, Member>();
@@ -351,6 +367,8 @@ export class StorageService {
         const merged = Array.from(map.values());
         localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
       }
+
+      // 2. Users
       if (cloudData.users && cloudData.users.length > 0) {
         const localUsers = this.getUsers();
         const map = new Map<string, UserAccount>();
@@ -366,75 +384,77 @@ export class StorageService {
         const merged = Array.from(map.values());
         this.saveUsers(merged);
       }
-      if (cloudData.contributions !== undefined) {
-        if (cloudData.contributions.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, Contribution>();
-          cloudData.contributions.forEach((c) => {
-            if (deletedIds.has(c.memberSystemId)) return;
-            map.set(c.contributionId, c);
-          });
-          localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(Array.from(map.values())));
-        }
+
+      // 3. Contributions: Union merge to never lose locally recorded payments
+      const localContributions = this.getContributions();
+      const conMap = new Map<string, Contribution>();
+      localContributions.forEach((c) => {
+        if (!deletedIds.has(c.memberSystemId)) conMap.set(c.contributionId, c);
+      });
+      if (cloudData.contributions && cloudData.contributions.length > 0) {
+        cloudData.contributions.forEach((c) => {
+          if (deletedIds.has(c.memberSystemId)) return;
+          conMap.set(c.contributionId, c);
+        });
       }
-      if (cloudData.loans !== undefined) {
-        if (cloudData.loans.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, Loan>();
-          cloudData.loans.forEach((l) => {
-            if (deletedIds.has(l.borrowerId)) return;
-            map.set(l.loanId, l);
-          });
-          localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(Array.from(conMap.values())));
+
+      // 4. Loans: Union merge
+      const localLoans = this.getLoans();
+      const loanMap = new Map<string, Loan>();
+      localLoans.forEach((l) => {
+        if (!deletedIds.has(l.borrowerId)) loanMap.set(l.loanId, l);
+      });
+      if (cloudData.loans && cloudData.loans.length > 0) {
+        cloudData.loans.forEach((l) => {
+          if (deletedIds.has(l.borrowerId)) return;
+          loanMap.set(l.loanId, l);
+        });
       }
-      if (cloudData.loanPayments !== undefined) {
-        if (cloudData.loanPayments.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.LOAN_PAYMENTS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, LoanPayment>();
-          cloudData.loanPayments.forEach((p) => {
-            map.set(p.paymentId, p);
-          });
-          localStorage.setItem(STORAGE_KEYS.LOAN_PAYMENTS, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify(Array.from(loanMap.values())));
+
+      // 5. Loan Payments: Union merge
+      const localPayments = this.getLoanPayments();
+      const pMap = new Map<string, LoanPayment>();
+      localPayments.forEach((p) => pMap.set(p.paymentId, p));
+      if (cloudData.loanPayments && cloudData.loanPayments.length > 0) {
+        cloudData.loanPayments.forEach((p) => pMap.set(p.paymentId, p));
       }
-      if (cloudData.incomes !== undefined) {
-        if (cloudData.incomes.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.INCOME, JSON.stringify([]));
-        } else {
-          const map = new Map<string, IncomeRecord>();
-          cloudData.incomes.forEach((i) => {
-            map.set(i.incomeId, i);
-          });
-          localStorage.setItem(STORAGE_KEYS.INCOME, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.LOAN_PAYMENTS, JSON.stringify(Array.from(pMap.values())));
+
+      // 6. Incomes: Union merge
+      const localIncomes = this.getIncomeRecords();
+      const incMap = new Map<string, IncomeRecord>();
+      localIncomes.forEach((i) => incMap.set(i.incomeId, i));
+      if (cloudData.incomes && cloudData.incomes.length > 0) {
+        cloudData.incomes.forEach((i) => incMap.set(i.incomeId, i));
       }
-      if (cloudData.expenses !== undefined) {
-        if (cloudData.expenses.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
-        } else {
-          const map = new Map<string, ExpenseRecord>();
-          cloudData.expenses.forEach((e) => {
-            map.set(e.expenseId, e);
-          });
-          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.INCOME, JSON.stringify(Array.from(incMap.values())));
+
+      // 7. Expenses: Union merge
+      const localExpenses = this.getExpenseRecords();
+      const expMap = new Map<string, ExpenseRecord>();
+      localExpenses.forEach((e) => expMap.set(e.expenseId, e));
+      if (cloudData.expenses && cloudData.expenses.length > 0) {
+        cloudData.expenses.forEach((e) => expMap.set(e.expenseId, e));
       }
-      if (cloudData.receipts !== undefined) {
-        if (cloudData.receipts.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, Receipt>();
-          cloudData.receipts.forEach((r) => {
-            if (r.memberSystemId && deletedIds.has(r.memberSystemId)) return;
-            map.set(r.receiptId, r);
-          });
-          localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(Array.from(expMap.values())));
+
+      // 8. Receipts: Union merge
+      const localReceipts = this.getReceipts();
+      const rcptMap = new Map<string, Receipt>();
+      localReceipts.forEach((r) => {
+        if (!deletedIds.has(r.memberSystemId || '')) rcptMap.set(r.receiptId, r);
+      });
+      if (cloudData.receipts && cloudData.receipts.length > 0) {
+        cloudData.receipts.forEach((r) => {
+          if (r.memberSystemId && deletedIds.has(r.memberSystemId)) return;
+          rcptMap.set(r.receiptId, r);
+        });
       }
+      localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(Array.from(rcptMap.values())));
+
+      // 9. Rules: Union merge
       if (cloudData.rules !== undefined && cloudData.rules.length > 0) {
         const localRules = this.getRules();
         const map = new Map<string, SocietyRule>();
@@ -444,6 +464,8 @@ export class StorageService {
         });
         localStorage.setItem(STORAGE_KEYS.RULES, JSON.stringify(Array.from(map.values())));
       }
+
+      // 10. Meetings: Union merge
       if (cloudData.meetings !== undefined && cloudData.meetings.length > 0) {
         const localMeetings = this.getMeetings();
         const map = new Map<string, GeneralMeeting>();
@@ -453,41 +475,45 @@ export class StorageService {
         });
         localStorage.setItem(STORAGE_KEYS.MEETINGS, JSON.stringify(Array.from(map.values())));
       }
-      if (cloudData.profitDistributions !== undefined) {
-        if (cloudData.profitDistributions.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.PROFIT_DISTRIBUTIONS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, ProfitDistribution>();
-          cloudData.profitDistributions.forEach((d) => {
-            map.set(d.distributionId, d);
-          });
-          localStorage.setItem(STORAGE_KEYS.PROFIT_DISTRIBUTIONS, JSON.stringify(Array.from(map.values())));
-        }
+
+      // 11. Profit Distributions: Union merge
+      const localDist = this.getProfitDistributions();
+      const distMap = new Map<string, ProfitDistribution>();
+      localDist.forEach((d) => distMap.set(d.distributionId, d));
+      if (cloudData.profitDistributions && cloudData.profitDistributions.length > 0) {
+        cloudData.profitDistributions.forEach((d) => distMap.set(d.distributionId, d));
       }
-      if (cloudData.memberWithdrawals !== undefined) {
-        if (cloudData.memberWithdrawals.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.MEMBER_WITHDRAWALS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, MemberWithdrawal>();
-          cloudData.memberWithdrawals.forEach((w) => {
-            if (deletedIds.has(w.memberSystemId)) return;
-            map.set(w.withdrawalId, w);
-          });
-          localStorage.setItem(STORAGE_KEYS.MEMBER_WITHDRAWALS, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.PROFIT_DISTRIBUTIONS, JSON.stringify(Array.from(distMap.values())));
+
+      // 12. Member Withdrawals: Union merge
+      const localWth = this.getMemberWithdrawals();
+      const wthMap = new Map<string, MemberWithdrawal>();
+      localWth.forEach((w) => {
+        if (!deletedIds.has(w.memberSystemId)) wthMap.set(w.withdrawalId, w);
+      });
+      if (cloudData.memberWithdrawals && cloudData.memberWithdrawals.length > 0) {
+        cloudData.memberWithdrawals.forEach((w) => {
+          if (deletedIds.has(w.memberSystemId)) return;
+          wthMap.set(w.withdrawalId, w);
+        });
       }
-      if (cloudData.transactions !== undefined) {
-        if (cloudData.transactions.length === 0) {
-          localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify([]));
-        } else {
-          const map = new Map<string, Transaction>();
-          cloudData.transactions.forEach((t) => {
-            if (t.memberSystemId && deletedIds.has(t.memberSystemId)) return;
-            map.set(t.transactionId, t);
-          });
-          localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(Array.from(map.values())));
-        }
+      localStorage.setItem(STORAGE_KEYS.MEMBER_WITHDRAWALS, JSON.stringify(Array.from(wthMap.values())));
+
+      // 13. Transactions: Union merge
+      const localTrx = this.getTransactions();
+      const trxMap = new Map<string, Transaction>();
+      localTrx.forEach((t) => {
+        if (!deletedIds.has(t.memberSystemId || '')) trxMap.set(t.transactionId, t);
+      });
+      if (cloudData.transactions && cloudData.transactions.length > 0) {
+        cloudData.transactions.forEach((t) => {
+          if (t.memberSystemId && deletedIds.has(t.memberSystemId)) return;
+          trxMap.set(t.transactionId, t);
+        });
       }
+      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(Array.from(trxMap.values())));
+
+      // 14. Settings
       if (cloudData.settings) {
         const localSettings = this.getSettings();
         const mergedSettings = { ...localSettings, ...cloudData.settings };
@@ -3655,7 +3681,7 @@ export class StorageService {
     }));
     this.saveMembers(intactMembers);
 
-    // Completely clear all contributions, receipts, transactions, loans, and expenses everywhere
+    // Completely clear all contributions, receipts, transactions, loans, expenses, and history
     this.saveContributions([]);
     this.saveReceipts([]);
     this.saveTransactions([]);
@@ -3666,7 +3692,13 @@ export class StorageService {
     this.saveExpenseRecords([]);
     this.saveProfitDistributions([]);
     this.saveMemberWithdrawals([]);
+    localStorage.setItem(STORAGE_KEYS.RULES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.MEETINGS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
+    try {
+      localStorage.removeItem('psys_shared_chat_messages_v1');
+    } catch {}
+    localStorage.setItem('pakura_last_reset_timestamp', String(Date.now()));
 
     // Keep Super Admin and member user accounts aligned with intact members
     const validMemberIds = new Set(intactMembers.map((m) => m.systemId));

@@ -313,39 +313,6 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
           </div>
         )}
 
-        {/* Multi-Account Selector for members with multiple accounts (e.g. Kajol Das Account 1 & 2) */}
-        {isMember && linkedMembers.length > 1 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              {language === 'bn' ? 'অ্যাকাউন্ট বাছাই:' : 'Filter Account:'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setSelectedAccountFilter('all_my')}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                selectedAccountFilter === 'all_my'
-                  ? 'bg-amber-600 text-white shadow-2xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              {language === 'bn' ? 'সকল হিসাব একত্রিত' : 'All Accounts Combined'}
-            </button>
-            {linkedMembers.map((m) => (
-              <button
-                key={m.systemId}
-                type="button"
-                onClick={() => setSelectedAccountFilter(m.systemId)}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  selectedAccountFilter === m.systemId
-                    ? 'bg-amber-600 text-white shadow-2xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                }`}
-              >
-                {m.name} ({m.systemId})
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* Receipts Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

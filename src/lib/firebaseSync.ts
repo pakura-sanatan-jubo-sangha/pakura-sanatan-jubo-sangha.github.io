@@ -600,6 +600,8 @@ export class FirebaseSyncService {
         'member_withdrawals',
         'rules',
         'meetings',
+        'activity_logs',
+        'chat_messages',
       ];
 
       for (const colName of collectionsToWipe) {
@@ -953,8 +955,14 @@ export class FirebaseSyncService {
     if (!transaction.transactionId) return;
     const path = `transactions/${transaction.transactionId}`;
     try {
+      const cleanData: Record<string, any> = {};
+      Object.entries(transaction).forEach(([k, v]) => {
+        if (v !== undefined) {
+          cleanData[k] = v;
+        }
+      });
       const ref = doc(db, 'transactions', transaction.transactionId);
-      await setDoc(ref, transaction, { merge: true });
+      await setDoc(ref, cleanData, { merge: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
@@ -1334,6 +1342,19 @@ export class FirebaseSyncService {
         }
       } catch (err) {
         console.warn('Settings load notice:', err);
+      }
+
+      // 10. Check if a clean cloud reset occurred
+      try {
+        const resetMetaSnap = await getDoc(doc(db, '_system_meta', 'reset_state'));
+        if (resetMetaSnap.exists()) {
+          const resetMetaData = resetMetaSnap.data();
+          if (resetMetaData?.lastResetAt) {
+            (result as any).cloudResetTimestamp = Number(resetMetaData.lastResetAt);
+          }
+        }
+      } catch (err) {
+        console.warn('Reset meta check notice:', err);
       }
     } catch (e) {
       console.warn('Error loading records from Firestore:', e);
