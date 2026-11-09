@@ -175,7 +175,10 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     }
 
     // 1. Direct system ID match for this member's own linked accounts
-    if (r.memberSystemId && linkedSystemIds.has(r.memberSystemId)) return true;
+    if (r.memberSystemId) {
+      const rSys = r.memberSystemId.trim().toLowerCase();
+      if (linkedSystemIds.has(r.memberSystemId) || linkedSystemIds.has(rSys)) return true;
+    }
 
     // 2. Receipt ID or Transaction ID linked to this member's financial records
     if (r.receiptId && linkedRecordReceiptIds.ids.has(r.receiptId)) return true;
@@ -192,6 +195,14 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         ) {
           return true;
         }
+      }
+    }
+
+    // 4. Exact or clean name matching fallback
+    const rNameClean = cleanNameBase(r.recipientName || r.name || '');
+    if (rNameClean) {
+      for (const ln of linkedNames) {
+        if (cleanNameBase(ln) === rNameClean) return true;
       }
     }
 

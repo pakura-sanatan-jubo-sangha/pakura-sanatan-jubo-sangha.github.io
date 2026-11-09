@@ -397,7 +397,41 @@ export class StorageService {
           conMap.set(c.contributionId, c);
         });
       }
-      localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(Array.from(conMap.values())));
+      const allContribs = Array.from(conMap.values());
+      localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(allContribs));
+
+      // Instant synchronization of members' currentBalance with actual verified savings
+      const allMembers = this.getMembers();
+      let membersBalanceUpdated = false;
+      allMembers.forEach((m) => {
+        const mSys = (m.systemId || '').trim().toLowerCase();
+        const mNum = mSys.replace(/\D/g, '').replace(/^0+/, '');
+        const mPhone = normalizePhoneNumber(m.phone || '');
+        const mName = (m.name || '').trim().toLowerCase();
+
+        const mPaid = allContribs
+          .filter((c) => {
+            const cSys = (c.memberSystemId || '').trim().toLowerCase();
+            const cNum = cSys.replace(/\D/g, '').replace(/^0+/, '');
+            const cPhone = normalizePhoneNumber((c as any).phone || '');
+            const cName = (c.memberName || '').trim().toLowerCase();
+
+            if (cSys && mSys && cSys === mSys) return true;
+            if (cNum && mNum && cNum === mNum) return true;
+            if (cPhone && mPhone && cPhone.length >= 10 && mPhone.length >= 10 && cPhone.slice(-10) === mPhone.slice(-10)) return true;
+            if (cName && mName && (cName === mName || cName.replace(/\(.*?\)/g, '').trim() === mName.replace(/\(.*?\)/g, '').trim())) return true;
+            return false;
+          })
+          .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
+        if (mPaid > (m.currentBalance || 0)) {
+          m.currentBalance = mPaid;
+          membersBalanceUpdated = true;
+        }
+      });
+      if (membersBalanceUpdated) {
+        localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(allMembers));
+      }
 
       // 4. Loans: Union merge
       const localLoans = this.getLoans();
@@ -768,6 +802,13 @@ export class StorageService {
     });
 
     if (matched.length > 0) return matched;
+
+    // Fallback: match by member name
+    const uDisplayName = (user.displayName || user.name || '').trim().toLowerCase();
+    if (uDisplayName) {
+      const byName = members.filter((m) => (m.name || '').trim().toLowerCase() === uDisplayName);
+      if (byName.length > 0) return byName;
+    }
 
     // Fallback search in members registry
     if (userSysId) {
@@ -1829,8 +1870,9 @@ export class StorageService {
     const receiptId = this.generateReceiptId();
     const today = new Date().toISOString().split('T')[0];
 
-    // Strictly 100 Taka flat rate for monthly savings
-    const effectiveAmount = amount || 100;
+    // Record the exact amount deposited (e.g. ৳100 or whatever custom amount was deposited)
+    const numAmount = typeof amount === 'string' ? parseFloat(amount) : Number(amount);
+    const effectiveAmount = !isNaN(numAmount) && numAmount > 0 ? numAmount : 100;
     const effectiveLateFee = lateFee || 0;
     const isBooster = contributionType === 'seasonal_booster' || effectiveAmount >= 500;
     const typeLabel = 'মাসিক সঞ্চয়';
@@ -1840,6 +1882,8 @@ export class StorageService {
       contributionId,
       memberSystemId,
       memberName: member.name,
+      phone: member.phone,
+      accountNumber: member.accountNumber,
       amount: effectiveAmount,
       contributionDate: today,
       month,

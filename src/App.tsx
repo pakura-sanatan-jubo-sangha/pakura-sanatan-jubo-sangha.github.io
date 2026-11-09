@@ -259,7 +259,7 @@ export default function App() {
     };
   }, []);
 
-  // 4. Apply clean slate and load cloud data
+  // 4. Apply clean slate and real-time instantaneous cloud data sync
   useEffect(() => {
     let isMounted = true;
     StorageService.checkAndApplyCleanSlate();
@@ -311,7 +311,15 @@ export default function App() {
       }
     };
 
+    // Immediate initial sync
     syncCloudData();
+
+    // Instant real-time subscriptions: fires immediately upon any change in Firebase
+    const unsubscribeRealtime = FirebaseSyncService.subscribeToRealtimeData((cloudData) => {
+      if (!isMounted) return;
+      StorageService.mergeCloudData(cloudData);
+      setAppData(StorageService.getAppData());
+    });
 
     // Re-sync when user returns to window / app tab on mobile or desktop
     const handleFocus = () => {
@@ -320,14 +328,11 @@ export default function App() {
     window.addEventListener('focus', handleFocus);
     window.addEventListener('online', handleFocus);
 
-    // Periodic sync every 30s so changes across devices show automatically
-    const interval = setInterval(syncCloudData, 30000);
-
     return () => {
       isMounted = false;
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('online', handleFocus);
-      clearInterval(interval);
+      if (unsubscribeRealtime) unsubscribeRealtime();
     };
   }, []);
 
@@ -1085,7 +1090,22 @@ export default function App() {
       const byUname = appData.members.find((m) => m.systemId.toLowerCase() === currentUser.username?.toLowerCase());
       if (byUname) return byUname;
     }
-    if (isAdmin && appData.members && appData.members.length > 0) {
+    if (currentUser.phone) {
+      const uPhone = StorageService.normalizePhoneNumber(currentUser.phone);
+      if (uPhone.length >= 10) {
+        const byPhone = appData.members.find((m) => {
+          const mPhone = StorageService.normalizePhoneNumber(m.phone);
+          return mPhone.length >= 10 && (mPhone === uPhone || mPhone.slice(-10) === uPhone.slice(-10));
+        });
+        if (byPhone) return byPhone;
+      }
+    }
+    if (currentUser.displayName || currentUser.name) {
+      const uName = (currentUser.displayName || currentUser.name || '').trim().toLowerCase();
+      const byName = appData.members.find((m) => m.name.trim().toLowerCase() === uName);
+      if (byName) return byName;
+    }
+    if (appData.members && appData.members.length > 0) {
       return appData.members.find((m) => m.status === 'active') || appData.members[0];
     }
     return {
@@ -1097,7 +1117,7 @@ export default function App() {
       createdAt: currentUser.createdAt || new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0],
     };
-  }, [currentMemberRecord, linkedMemberRecords, appData.members, currentUser, isAdmin]);
+  }, [currentMemberRecord, linkedMemberRecords, appData.members, currentUser]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 relative">
@@ -1364,10 +1384,10 @@ export default function App() {
 
           {/* 3. Contributions View (Monthly Savings) */}
           {!isViewOnly && currentTab === 'contributions' && (
-            isMember && currentMemberRecord ? (
+            isMember && resolvedMemberRecord ? (
               <MemberSavingsView
-                member={currentMemberRecord}
-                linkedMembers={linkedMemberRecords}
+                member={resolvedMemberRecord}
+                linkedMembers={linkedMemberRecords.length > 0 ? linkedMemberRecords : [resolvedMemberRecord]}
                 contributions={appData.contributions}
                 receipts={appData.receipts}
                 monthlyAmount={appData.settings.monthlyContributionAmount}

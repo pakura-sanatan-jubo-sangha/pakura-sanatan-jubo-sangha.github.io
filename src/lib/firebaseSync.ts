@@ -7,6 +7,7 @@ import {
   deleteDoc,
   query,
   where,
+  onSnapshot,
 } from 'firebase/firestore';
 import {
   signInWithEmailAndPassword,
@@ -693,6 +694,8 @@ export class FirebaseSyncService {
           contributionId: contribution.contributionId,
           memberSystemId: contribution.memberSystemId,
           memberName: contribution.memberName,
+          phone: contribution.phone || '',
+          accountNumber: contribution.accountNumber || '',
           amount: Number(contribution.amount || 0),
           contributionDate: contribution.contributionDate,
           month: contribution.month,
@@ -1215,8 +1218,26 @@ export class FirebaseSyncService {
         const contributions: Contribution[] = [];
         contributionsSnap.value.forEach((d) => {
           const c = d.data();
-          if (c?.contributionId) {
-            contributions.push(c as Contribution);
+          const conId = c?.contributionId || d.id;
+          if (conId) {
+            contributions.push({
+              contributionId: conId,
+              memberSystemId: c?.memberSystemId || '',
+              memberName: c?.memberName || '',
+              phone: c?.phone || '',
+              accountNumber: c?.accountNumber || '',
+              amount: Number(c?.amount || 0),
+              contributionDate: c?.contributionDate || '',
+              month: c?.month || '',
+              paymentMethod: c?.paymentMethod || 'cash',
+              receiptId: c?.receiptId || '',
+              recordedBy: c?.recordedBy || '',
+              createdAt: c?.createdAt || '',
+              status: c?.status || 'paid',
+              lateFee: Number(c?.lateFee || 0),
+              notes: c?.notes || '',
+              contributionType: c?.contributionType || 'regular',
+            } as Contribution);
           }
         });
         result.contributions = contributions;
@@ -1361,5 +1382,200 @@ export class FirebaseSyncService {
     }
 
     return result;
+  }
+
+  /**
+   * Real-time multi-collection listener using Firestore onSnapshot.
+   * Fires instantaneously whenever an admin or user modifies records in Firebase.
+   */
+  static subscribeToRealtimeData(
+    onUpdate: (data: Partial<FullAppData>) => void
+  ): () => void {
+    const unsubscribes: (() => void)[] = [];
+
+    // Helper to extract and sanitize a document list from snapshot
+    const parseSnapshot = (snapshot: any, parser: (d: any) => any) => {
+      const items: any[] = [];
+      snapshot.forEach((docSnap: any) => {
+        try {
+          const item = parser(docSnap);
+          if (item) items.push(item);
+        } catch {}
+      });
+      return items;
+    };
+
+    // 1. Real-time Members Listener (Instant balance and status update)
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'members'),
+        (snap) => {
+          const members: Member[] = parseSnapshot(snap, (d) => {
+            const m = d.data();
+            const sysId = m?.systemId || m?.memberSystemId || m?.id || d.id;
+            if (!sysId) return null;
+            return {
+              systemId: sysId,
+              name: m?.name || m?.memberName || '',
+              phone: m?.phone || m?.mobile || '',
+              status: m?.status || 'active',
+              currentBalance: Number(m?.currentBalance ?? m?.balance ?? 0),
+              profitShareBalance: Number(m?.profitShareBalance ?? 0),
+              totalWithdrawn: Number(m?.totalWithdrawn ?? 0),
+              accountNumber: m?.accountNumber || '',
+              email: m?.email || '',
+              userId: m?.userId || '',
+              createdAt: m?.createdAt || '',
+              updatedAt: m?.updatedAt || '',
+            } as Member;
+          });
+          if (members.length > 0) {
+            onUpdate({ members });
+          }
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'members');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime members listener notice:', e);
+    }
+
+    // 2. Real-time Contributions Listener (Instant payment history updates)
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'contributions'),
+        (snap) => {
+          const contributions: Contribution[] = parseSnapshot(snap, (d) => {
+            const c = d.data();
+            const conId = c?.contributionId || c?.contribution_id || c?.id || d.id;
+            if (!conId) return null;
+            return {
+              contributionId: conId,
+              memberSystemId: c?.memberSystemId || c?.memberId || c?.systemId || '',
+              memberName: c?.memberName || c?.member_name || c?.name || '',
+              phone: c?.phone || c?.memberPhone || '',
+              accountNumber: c?.accountNumber || '',
+              amount: Number(c?.amount || c?.contributionAmount || 0),
+              contributionDate: c?.contributionDate || c?.date || '',
+              month: c?.month || '',
+              paymentMethod: c?.paymentMethod || c?.payment_method || 'cash',
+              receiptId: c?.receiptId || c?.receipt_id || '',
+              recordedBy: c?.recordedBy || c?.recorded_by || '',
+              createdAt: c?.createdAt || '',
+              status: c?.status || 'paid',
+              lateFee: Number(c?.lateFee || c?.late_fee || 0),
+              notes: c?.notes || '',
+              contributionType: c?.contributionType || c?.contribution_type || 'regular',
+            } as Contribution;
+          });
+          onUpdate({ contributions });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'contributions');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime contributions listener notice:', e);
+    }
+
+    // 3. Real-time Receipts Listener (Instant voucher display)
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'receipts'),
+        (snap) => {
+          const receipts: Receipt[] = parseSnapshot(snap, (d) => {
+            const r = d.data();
+            const rId = r?.receiptId || d.id;
+            if (!rId) return null;
+            return {
+              receiptId: rId,
+              transactionId: r?.transactionId || '',
+              name: r?.name || r?.recipientName || '',
+              phone: r?.phone || '',
+              amount: Number(r?.amount || 0),
+              purpose: r?.purpose || '',
+              date: r?.date || '',
+              receivedBy: r?.receivedBy || '',
+              paymentMethod: r?.paymentMethod || 'cash',
+              createdAt: r?.createdAt || '',
+              type: r?.type || 'contribution',
+              memberSystemId: r?.memberSystemId || '',
+            } as Receipt;
+          });
+          onUpdate({ receipts });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'receipts');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime receipts listener notice:', e);
+    }
+
+    // 4. Real-time Transactions Listener
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'transactions'),
+        (snap) => {
+          const transactions: any[] = parseSnapshot(snap, (d) => {
+            const t = d.data();
+            return t?.transactionId ? t : { ...t, transactionId: d.id };
+          });
+          onUpdate({ transactions });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'transactions');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime transactions listener notice:', e);
+    }
+
+    // 5. Real-time Member Withdrawals Listener
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'member_withdrawals'),
+        (snap) => {
+          const withdrawals: MemberWithdrawal[] = parseSnapshot(snap, (d) => {
+            const w = d.data();
+            const wId = w?.withdrawalId || d.id;
+            if (!wId) return null;
+            return {
+              withdrawalId: wId,
+              memberSystemId: w?.memberSystemId || '',
+              memberName: w?.memberName || '',
+              amount: Number(w?.amount || 0),
+              date: w?.date || '',
+              paymentMethod: w?.paymentMethod || 'cash',
+              status: w?.status || 'completed',
+              source: w?.source || 'savings',
+              createdAt: w?.createdAt || '',
+              ...w,
+            } as MemberWithdrawal;
+          });
+          onUpdate({ memberWithdrawals: withdrawals });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'member_withdrawals');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime withdrawals listener notice:', e);
+    }
+
+    // Return cleanup unsubscribe function
+    return () => {
+      unsubscribes.forEach((unsub) => {
+        try {
+          unsub();
+        } catch {}
+      });
+    };
   }
 }

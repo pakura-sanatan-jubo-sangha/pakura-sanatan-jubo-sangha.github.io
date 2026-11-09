@@ -180,29 +180,93 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
   // Determine active linked members
   const actualLinkedMembers = linkedMembers.length > 0 ? linkedMembers : (member ? [member] : []);
   const primaryMember = actualLinkedMembers[0] || member;
-  const linkedSystemIds = actualLinkedMembers.map((m) => m.systemId);
+  const linkedSystemIds = actualLinkedMembers.map((m) => (m.systemId || '').trim().toLowerCase());
 
   // Filter contributions for this member & linked accounts (accurately reflects actual amount deposited)
   const myContributions = useMemo(() => {
-    return contributions.filter(
-      (c) => linkedSystemIds.includes(c.memberSystemId) && c && c.month
-    );
-  }, [contributions, linkedSystemIds]);
-  const totalSavingsPaid = myContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
+    return contributions.filter((c) => {
+      if (!c || !c.month) return false;
+      const cSysId = (c.memberSystemId || '').trim().toLowerCase();
+      const cName = (c.memberName || '').trim().toLowerCase();
+      const cPhone = (c as any).phone ? StorageService.normalizePhoneNumber((c as any).phone) : '';
+      const cAcc = (c as any).accountNumber ? String((c as any).accountNumber).trim() : '';
+
+      return actualLinkedMembers.some((m) => {
+        if (!m) return false;
+        const mSysId = (m.systemId || '').trim().toLowerCase();
+        const mName = (m.name || '').trim().toLowerCase();
+        const mPhone = StorageService.normalizePhoneNumber(m.phone || '');
+        const mAcc = m.accountNumber ? String(m.accountNumber).trim() : '';
+
+        // 1. Direct System ID match (case-insensitive & trimmed)
+        if (cSysId && mSysId && cSysId === mSysId) return true;
+
+        // 1b. Prefix-agnostic numeric sequence match (e.g. SYS-000001 vs MEM-000001 or 1 vs 000001)
+        const cNum = cSysId.replace(/\D/g, '').replace(/^0+/, '');
+        const mNum = mSysId.replace(/\D/g, '').replace(/^0+/, '');
+        if (cNum && mNum && cNum === mNum) return true;
+
+        // 2. Account number match
+        if (cAcc && mAcc && cAcc === mAcc) return true;
+
+        // 3. Phone match (last 10 digits match)
+        if (cPhone && mPhone && cPhone.length >= 10 && mPhone.length >= 10) {
+          if (cPhone.slice(-10) === mPhone.slice(-10)) return true;
+        }
+
+        // 4. Exact or cleaned member name match
+        if (cName && mName) {
+          if (cName === mName) return true;
+          const cleanC = cName.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+          const cleanM = mName.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+          if (cleanC && cleanM && (cleanC === cleanM || (cleanC.length > 3 && cleanM.length > 3 && (cleanC.includes(cleanM) || cleanM.includes(cleanC))))) {
+            return true;
+          }
+        }
+
+        // 5. Cross-reference through member receipts
+        if (c.receiptId && receipts.some((r) => r.receiptId === c.receiptId && (
+          (r.memberSystemId && (r.memberSystemId.toLowerCase() === mSysId || r.memberSystemId.replace(/\D/g, '').replace(/^0+/, '') === mNum)) ||
+          (r.phone && mPhone && StorageService.normalizePhoneNumber(r.phone).slice(-10) === mPhone.slice(-10))
+        ))) return true;
+
+        return false;
+      });
+    });
+  }, [contributions, actualLinkedMembers, receipts]);
+
+  const totalSavingsPaid = useMemo(() => {
+    return myContributions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  }, [myContributions]);
 
   // Active account selection filtering (sorted newest month first)
   const effectiveContributions = useMemo(() => {
     const list = selectedAccountId === 'all'
       ? myContributions
-      : myContributions.filter((c) => c.memberSystemId === selectedAccountId);
+      : myContributions.filter((c) => {
+          const targetMem = actualLinkedMembers.find(
+            (m) => (m.systemId || '').toLowerCase() === selectedAccountId.toLowerCase()
+          );
+          if (targetMem) {
+            const cSysId = (c.memberSystemId || '').trim().toLowerCase();
+            const mSysId = (targetMem.systemId || '').trim().toLowerCase();
+            if (cSysId && mSysId && cSysId === mSysId) return true;
+            if (c.memberName && targetMem.name && c.memberName.trim().toLowerCase() === targetMem.name.trim().toLowerCase()) return true;
+            return false;
+          }
+          return (c.memberSystemId || '').toLowerCase() === selectedAccountId.toLowerCase();
+        });
+
     return [...list].sort((a, b) => {
       const monthDiff = (b.month || '').localeCompare(a.month || '');
       if (monthDiff !== 0) return monthDiff;
       return (b.contributionDate || '').localeCompare(a.contributionDate || '');
     });
-  }, [myContributions, selectedAccountId]);
+  }, [myContributions, selectedAccountId, actualLinkedMembers]);
 
-  const effectiveTotalSavingsPaid = effectiveContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
+  const effectiveTotalSavingsPaid = useMemo(() => {
+    return effectiveContributions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  }, [effectiveContributions]);
   const effectivePaidMonthsCount = effectiveContributions.length;
 
   // Month calculations: Generate months starting from the member's earliest recorded month in Firebase
@@ -253,7 +317,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
 
   // Member's past withdrawals categorized
   const myWithdrawals = (withdrawals || []).filter((w) =>
-    linkedSystemIds.includes(w.memberSystemId)
+    linkedSystemIds.includes((w.memberSystemId || '').trim().toLowerCase())
   );
   const myPendingWithdrawals = myWithdrawals.filter((w) => w.status === 'pending');
   const myCompletedWithdrawals = myWithdrawals.filter((w) => w.status === 'completed');
@@ -261,16 +325,13 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
 
   // Calculate aggregated financial numbers across all linked accounts
   // Guaranteed zero-loss: balances cross-reference contribution ledger minus completed savings withdrawals
-  const aggregatedBalance = actualLinkedMembers.reduce((sum, m) => {
-    const memberPaid = myContributions
-      .filter((c) => c.memberSystemId === m.systemId && c.status === 'paid')
-      .reduce((s, c) => s + (c.amount || 0), 0);
-    const memberWithdrawn = myWithdrawals
-      .filter((w) => w.memberSystemId === m.systemId && w.status === 'completed' && (w.source === 'savings' || w.source === 'combined' || !w.source))
-      .reduce((s, w) => s + (w.amount || 0), 0);
-    const ledgerNet = Math.max(0, memberPaid - memberWithdrawn);
-    return sum + Math.max(m.currentBalance || 0, ledgerNet);
-  }, 0);
+  const totalSavingsWithdrawn = myWithdrawals
+    .filter((w) => w.status === 'completed' && (w.source === 'savings' || w.source === 'combined' || !w.source))
+    .reduce((s, w) => s + Number(w.amount || 0), 0);
+
+  const totalRecordBalance = actualLinkedMembers.reduce((sum, m) => sum + Number(m.currentBalance || 0), 0);
+  const netSavingsLedger = Math.max(0, totalSavingsPaid - totalSavingsWithdrawn);
+  const aggregatedBalance = Math.max(totalRecordBalance, netSavingsLedger);
   const profitShareBalance = actualLinkedMembers.reduce((sum, m) => sum + (m.profitShareBalance || 0), 0);
   const totalWithdrawn = actualLinkedMembers.reduce((sum, m) => sum + (m.totalWithdrawn || 0), 0);
 
@@ -893,7 +954,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                     {language === 'bn' ? 'মোট পরিশোধিত সঞ্চয়' : 'Total Savings Paid'}
                   </span>
                   <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">
-                    ৳{(primaryMember?.currentBalance || 0).toLocaleString()}
+                    ৳{Math.max(primaryMember?.currentBalance || 0, effectiveTotalSavingsPaid).toLocaleString()}
                   </span>
                 </div>
                 <div className="pl-3 border-l border-slate-200 dark:border-slate-800">
@@ -901,7 +962,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                     {language === 'bn' ? 'পরিশোধিত কিস্তি' : 'Paid Installments'}
                   </span>
                   <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                    {myContributions.length} {language === 'bn' ? 'টি মাস' : 'months'}
+                    {effectiveContributions.length} {language === 'bn' ? 'টি মাস' : 'months'}
                   </span>
                 </div>
               </div>
@@ -955,7 +1016,10 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {effectiveContributions.map((c, idx) => {
-                        const accOwner = actualLinkedMembers.find((m) => m.systemId === c.memberSystemId);
+                        const accOwner = actualLinkedMembers.find(
+                          (m) => (m.systemId || '').toLowerCase() === (c.memberSystemId || '').toLowerCase()
+                        );
+                        const hasReceipt = Boolean(c.receiptId || receipts.some((r) => r.transactionId === c.contributionId));
                         return (
                           <tr
                             key={c.contributionId || idx}
@@ -966,10 +1030,10 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                               {formatMonthName(c.month) || c.month}
                             </td>
                             <td className="p-3 font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                              ৳{(c.amount || 0).toLocaleString()}
-                              {c.lateFee && c.lateFee > 0 && (
+                              ৳{Number(c.amount || 0).toLocaleString()}
+                              {c.lateFee && Number(c.lateFee) > 0 && (
                                 <span className="block text-[10px] text-amber-600 font-normal">
-                                  +{language === 'bn' ? 'বিলম্ব ফি' : 'Late fee'} ৳{c.lateFee}
+                                  +{language === 'bn' ? 'বিলম্ব ফি' : 'Late fee'} ৳{Number(c.lateFee)}
                                 </span>
                               )}
                             </td>
@@ -1014,12 +1078,13 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                               </span>
                             </td>
                             <td className="p-3 text-right whitespace-nowrap">
-                              {c.receiptId ? (
+                              {hasReceipt ? (
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (onViewReceipt) {
-                                      onViewReceipt(c.receiptId);
+                                    const targetReceiptId = c.receiptId || receipts.find((r) => r.transactionId === c.contributionId)?.receiptId;
+                                    if (targetReceiptId && onViewReceipt) {
+                                      onViewReceipt(targetReceiptId);
                                     } else if (onNavigate) {
                                       onNavigate('receipts');
                                     }

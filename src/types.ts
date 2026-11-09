@@ -25,6 +25,8 @@ export interface Member {
   currentBalance: number;
   profitShareBalance?: number; // Total loan profit shares allocated to this member
   totalWithdrawn?: number; // Total amount withdrawn by this member
+  accountNumber?: string;
+  email?: string;
   userId?: string;
   createdAt: string;
   updatedAt: string;
@@ -99,6 +101,8 @@ export interface Contribution {
   contributionId: string;
   memberSystemId: string;
   memberName: string;
+  phone?: string;
+  accountNumber?: string;
   amount: number;
   contributionDate: string; // YYYY-MM-DD
   month: string; // e.g. "2026-09"

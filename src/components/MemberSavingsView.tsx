@@ -1,6 +1,7 @@
 import React from 'react';
 import { Member, Contribution, Receipt, Language, PaymentMethod } from '../types';
 import { getTranslation } from '../lib/translations';
+import { StorageService } from '../lib/storage';
 import {
   PiggyBank,
   CheckCircle2,
@@ -28,6 +29,7 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
   member,
   linkedMembers = [member],
   contributions,
+  receipts,
   monthlyAmount,
   dueDay = 10,
   lateFeeAmount = 10,
@@ -37,34 +39,103 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
   const t = getTranslation(language);
   const [selectedAccountId, setSelectedAccountId] = React.useState<string>('all');
 
-  // Collect all system IDs for linked accounts
-  const systemIds = linkedMembers.map((m) => m.systemId);
+  // Determine active linked members
+  const actualLinkedMembers = (linkedMembers && linkedMembers.length > 0)
+    ? linkedMembers
+    : (member ? [member] : []);
+  const primaryMember = actualLinkedMembers[0] || member;
 
-  // Filter contributions for this member (and linked accounts)
-  const allMyContributions = contributions
-    .filter((c) => systemIds.includes(c.memberSystemId) && c && c.month)
-    .sort((a, b) => (b.month || '').localeCompare(a.month || ''));
+  // Filter contributions for this member (and linked accounts) using multi-factor matching
+  const allMyContributions = React.useMemo(() => {
+    return contributions
+      .filter((c) => {
+        if (!c || !c.month) return false;
+        const cSysId = (c.memberSystemId || '').trim().toLowerCase();
+        const cName = (c.memberName || '').trim().toLowerCase();
+        const cPhone = (c as any).phone ? StorageService.normalizePhoneNumber((c as any).phone) : '';
+        const cAcc = (c as any).accountNumber ? String((c as any).accountNumber).trim() : '';
 
-  const myContributions = selectedAccountId === 'all'
-    ? allMyContributions
-    : allMyContributions.filter((c) => c.memberSystemId === selectedAccountId);
+        return actualLinkedMembers.some((m) => {
+          if (!m) return false;
+          const mSysId = (m.systemId || '').trim().toLowerCase();
+          const mName = (m.name || '').trim().toLowerCase();
+          const mPhone = StorageService.normalizePhoneNumber(m.phone || '');
+          const mAcc = m.accountNumber ? String(m.accountNumber).trim() : '';
+
+          // 1. Direct System ID match (case-insensitive & trimmed)
+          if (cSysId && mSysId && cSysId === mSysId) return true;
+
+          // 1b. Prefix-agnostic numeric sequence match (e.g. SYS-000001 vs MEM-000001 or 1 vs 000001)
+          const cNum = cSysId.replace(/\D/g, '').replace(/^0+/, '');
+          const mNum = mSysId.replace(/\D/g, '').replace(/^0+/, '');
+          if (cNum && mNum && cNum === mNum) return true;
+
+          // 2. Account number match
+          if (cAcc && mAcc && cAcc === mAcc) return true;
+
+          // 3. Phone match (last 10 digits match)
+          if (cPhone && mPhone && cPhone.length >= 10 && mPhone.length >= 10) {
+            if (cPhone.slice(-10) === mPhone.slice(-10)) return true;
+          }
+
+          // 4. Exact or cleaned member name match
+          if (cName && mName) {
+            if (cName === mName) return true;
+            const cleanC = cName.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+            const cleanM = mName.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+            if (cleanC && cleanM && (cleanC === cleanM || (cleanC.length > 3 && cleanM.length > 3 && (cleanC.includes(cleanM) || cleanM.includes(cleanC))))) {
+              return true;
+            }
+          }
+
+          // 5. Cross-reference through member receipts
+          if (c.receiptId && receipts.some((r) => r.receiptId === c.receiptId && (
+            (r.memberSystemId && (r.memberSystemId.toLowerCase() === mSysId || r.memberSystemId.replace(/\D/g, '').replace(/^0+/, '') === mNum)) ||
+            (r.phone && mPhone && StorageService.normalizePhoneNumber(r.phone).slice(-10) === mPhone.slice(-10))
+          ))) return true;
+
+          return false;
+        });
+      })
+      .sort((a, b) => (b.month || '').localeCompare(a.month || ''));
+  }, [contributions, actualLinkedMembers, receipts]);
+
+  const myContributions = React.useMemo(() => {
+    if (selectedAccountId === 'all') return allMyContributions;
+    return allMyContributions.filter((c) => {
+      const targetMem = actualLinkedMembers.find(
+        (m) => (m.systemId || '').toLowerCase() === selectedAccountId.toLowerCase()
+      );
+      if (targetMem) {
+        const cSysId = (c.memberSystemId || '').trim().toLowerCase();
+        const mSysId = (targetMem.systemId || '').trim().toLowerCase();
+        if (cSysId && mSysId && cSysId === mSysId) return true;
+        if (c.memberName && targetMem.name && c.memberName.trim().toLowerCase() === targetMem.name.trim().toLowerCase()) return true;
+        return false;
+      }
+      return (c.memberSystemId || '').toLowerCase() === selectedAccountId.toLowerCase();
+    });
+  }, [allMyContributions, selectedAccountId, actualLinkedMembers]);
 
   // Calculate total savings paid
-  const totalPaidSavings = myContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
+  const totalPaidSavings = React.useMemo(() => {
+    return myContributions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  }, [myContributions]);
   const paidMonthsCount = myContributions.length;
 
-  // Calculate aggregated current balance from member records
-  const aggregatedBalance = selectedAccountId === 'all'
-    ? linkedMembers.reduce((sum, m) => sum + (m.currentBalance || 0), 0)
-    : (linkedMembers.find((m) => m.systemId === selectedAccountId)?.currentBalance || 0);
+  // Calculate aggregated current balance from member records (guarantee it reflects at least actual paid savings)
+  const baseAggregatedBalance = selectedAccountId === 'all'
+    ? actualLinkedMembers.reduce((sum, m) => sum + (m.currentBalance || 0), 0)
+    : (actualLinkedMembers.find((m) => m.systemId === selectedAccountId)?.currentBalance || 0);
+  const aggregatedBalance = Math.max(baseAggregatedBalance, totalPaidSavings);
 
   const profitShareBalance = selectedAccountId === 'all'
-    ? linkedMembers.reduce((sum, m) => sum + (m.profitShareBalance || 0), 0)
-    : (linkedMembers.find((m) => m.systemId === selectedAccountId)?.profitShareBalance || 0);
+    ? actualLinkedMembers.reduce((sum, m) => sum + (m.profitShareBalance || 0), 0)
+    : (actualLinkedMembers.find((m) => m.systemId === selectedAccountId)?.profitShareBalance || 0);
 
   const totalWithdrawn = selectedAccountId === 'all'
-    ? linkedMembers.reduce((sum, m) => sum + (m.totalWithdrawn || 0), 0)
-    : (linkedMembers.find((m) => m.systemId === selectedAccountId)?.totalWithdrawn || 0);
+    ? actualLinkedMembers.reduce((sum, m) => sum + (m.totalWithdrawn || 0), 0)
+    : (actualLinkedMembers.find((m) => m.systemId === selectedAccountId)?.totalWithdrawn || 0);
 
   // Month calculations: Start from earliest recorded contribution month in Firebase (2026-08)
   const memberContribMonths = myContributions
@@ -370,10 +441,10 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                       {c.contributionDate}
                     </td>
                     <td className="p-3.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
-                      ৳{c.amount.toLocaleString()}
-                      {c.lateFee && c.lateFee > 0 && (
+                      ৳{Number(c.amount || 0).toLocaleString()}
+                      {c.lateFee && Number(c.lateFee) > 0 && (
                         <span className="block text-[10px] text-amber-600 font-normal">
-                          +{language === 'bn' ? 'জরিমানা ৳' : 'late ৳'}{c.lateFee}
+                          +{language === 'bn' ? 'জরিমানা ৳' : 'late ৳'}{Number(c.lateFee)}
                         </span>
                       )}
                     </td>
@@ -389,9 +460,12 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                       </span>
                     </td>
                     <td className="p-3.5 text-right">
-                      {c.receiptId ? (
+                      {Boolean(c.receiptId || receipts.some((r) => r.transactionId === c.contributionId)) ? (
                         <button
-                          onClick={() => onViewReceipt(c.receiptId)}
+                          onClick={() => {
+                            const targetReceiptId = c.receiptId || receipts.find((r) => r.transactionId === c.contributionId)?.receiptId;
+                            if (targetReceiptId) onViewReceipt(targetReceiptId);
+                          }}
                           className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900 border border-emerald-200 dark:border-emerald-800 transition-all cursor-pointer inline-flex items-center gap-1"
                         >
                           <ReceiptText className="w-3 h-3" />
