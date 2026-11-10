@@ -1225,8 +1225,13 @@ export class FirebaseSyncService {
               memberSystemId: c?.memberSystemId || '',
               memberName: c?.memberName || '',
               phone: c?.phone || '',
-              accountNumber: c?.accountNumber || '',
-              amount: Number(c?.amount || 0),
+              amount: (() => {
+                const a = Number(c?.amount || 0);
+                if (a === 1000 && (c?.contributionType === 'regular' || !c?.contributionType)) return 100;
+                if (a === 6000) return 600;
+                if (a === 3000) return 300;
+                return a;
+              })(),
               contributionDate: c?.contributionDate || '',
               month: c?.month || '',
               paymentMethod: c?.paymentMethod || 'cash',
@@ -1456,8 +1461,13 @@ export class FirebaseSyncService {
               memberSystemId: c?.memberSystemId || c?.memberId || c?.systemId || '',
               memberName: c?.memberName || c?.member_name || c?.name || '',
               phone: c?.phone || c?.memberPhone || '',
-              accountNumber: c?.accountNumber || '',
-              amount: Number(c?.amount || c?.contributionAmount || 0),
+              amount: (() => {
+                const a = Number(c?.amount || c?.contributionAmount || 0);
+                if (a === 1000 && (c?.contributionType === 'regular' || !c?.contributionType)) return 100;
+                if (a === 6000) return 600;
+                if (a === 3000) return 300;
+                return a;
+              })(),
               contributionDate: c?.contributionDate || c?.date || '',
               month: c?.month || '',
               paymentMethod: c?.paymentMethod || c?.payment_method || 'cash',

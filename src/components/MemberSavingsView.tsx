@@ -119,7 +119,10 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
 
   // Calculate total savings paid
   const totalPaidSavings = React.useMemo(() => {
-    return myContributions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    return myContributions.reduce(
+      (sum, c) => sum + StorageService.sanitizeAmount(c.amount, c.contributionType, c.month),
+      0
+    );
   }, [myContributions]);
   const paidMonthsCount = myContributions.length;
 
@@ -253,6 +256,57 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
         </div>
       </div>
 
+      {/* Account Switcher Tabs when multiple accounts exist for this mobile number */}
+      {actualLinkedMembers.length > 1 && (
+        <div className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-emerald-600" />
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              {language === 'bn' ? 'সংযুক্ত অ্যাকাউন্ট নির্বাচন করুন:' : 'Select Account:'}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setSelectedAccountId('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                selectedAccountId === 'all'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <span>{language === 'bn' ? 'সকল অ্যাকাউন্ট একত্রিত' : 'All Accounts'}</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                selectedAccountId === 'all' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+              }`}>
+                {actualLinkedMembers.length}
+              </span>
+            </button>
+            {actualLinkedMembers.map((m) => {
+              const isSelected = selectedAccountId === m.systemId;
+              return (
+                <button
+                  key={m.systemId}
+                  type="button"
+                  onClick={() => setSelectedAccountId(m.systemId)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span className="truncate max-w-[130px]">{m.name}</span>
+                  <span className={`text-[10px] font-mono px-1 rounded ${
+                    isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                  }`}>
+                    {m.systemId}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 2. Four Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
@@ -423,13 +477,20 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                   <th className="p-3.5 font-medium">{language === 'bn' ? 'মাস' : 'Month'}</th>
                   <th className="p-3.5 font-medium">{language === 'bn' ? 'জমার তারিখ' : 'Payment Date'}</th>
                   <th className="p-3.5 font-medium text-right">{language === 'bn' ? 'পরিমাণ' : 'Amount'}</th>
+                  {actualLinkedMembers.length > 1 && selectedAccountId === 'all' && (
+                    <th className="p-3.5 font-medium">{language === 'bn' ? 'অ্যাকাউন্ট' : 'Account'}</th>
+                  )}
                   <th className="p-3.5 font-medium text-center">{language === 'bn' ? 'মাধ্যম' : 'Method'}</th>
                   <th className="p-3.5 font-medium text-center">{language === 'bn' ? 'স্ট্যাটাস' : 'Status'}</th>
                   <th className="p-3.5 font-medium text-right">{language === 'bn' ? 'রশিদ' : 'Receipt'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {myContributions.map((c, idx) => (
+                {myContributions.map((c, idx) => {
+                  const accOwner = actualLinkedMembers.find(
+                    (m) => (m.systemId || '').toLowerCase() === (c.memberSystemId || '').toLowerCase()
+                  );
+                  return (
                   <tr
                     key={`${c.contributionId}-${idx}`}
                     className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
@@ -441,13 +502,18 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                       {c.contributionDate}
                     </td>
                     <td className="p-3.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
-                      ৳{Number(c.amount || 0).toLocaleString()}
+                      ৳{StorageService.sanitizeAmount(c.amount, c.contributionType, c.month).toLocaleString()}
                       {c.lateFee && Number(c.lateFee) > 0 && (
                         <span className="block text-[10px] text-amber-600 font-normal">
                           +{language === 'bn' ? 'জরিমানা ৳' : 'late ৳'}{Number(c.lateFee)}
                         </span>
                       )}
                     </td>
+                    {actualLinkedMembers.length > 1 && selectedAccountId === 'all' && (
+                      <td className="p-3.5 text-slate-700 dark:text-slate-300 font-medium">
+                        {accOwner?.name || c.memberName}
+                      </td>
+                    )}
                     <td className="p-3.5 text-center">
                       <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase">
                         {c.paymentMethod === 'bank' ? (language === 'bn' ? 'ব্যাংক' : 'Bank') : (language === 'bn' ? 'ক্যাশ' : 'Cash')}
@@ -476,7 +542,8 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                       )}
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           )}

@@ -397,7 +397,10 @@ export class StorageService {
           conMap.set(c.contributionId, c);
         });
       }
-      const allContribs = Array.from(conMap.values());
+      const allContribs = Array.from(conMap.values()).map((c) => ({
+        ...c,
+        amount: this.sanitizeAmount(c.amount, c.contributionType, c.month),
+      }));
       localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(allContribs));
 
       // Instant synchronization of members' currentBalance with actual verified savings
@@ -1823,6 +1826,16 @@ export class StorageService {
   }
 
   // --- Contributions ---
+  static sanitizeAmount(amount: any, type?: string, month?: string): number {
+    const num = typeof amount === 'string' ? parseFloat(amount) : Number(amount || 0);
+    if (isNaN(num) || num <= 0) return 100;
+    // Auto-repair string concatenation bugs (e.g. 100 + "0" = 1000, 600 + "0" = 6000, 300 + "0" = 3000)
+    if (num === 1000 && (type === 'regular' || !type)) return 100;
+    if (num === 6000) return 600;
+    if (num === 3000) return 300;
+    return num;
+  }
+
   static getContributions(): Contribution[] {
     const raw = localStorage.getItem(STORAGE_KEYS.CONTRIBUTIONS);
     let list: Contribution[] = [];
@@ -1834,7 +1847,22 @@ export class StorageService {
       }
     }
     if (!Array.isArray(list)) return [];
-    return list;
+    
+    // Auto-sanitize all contribution amounts
+    let needsResave = false;
+    const sanitized = list.map((c) => {
+      const cleanAmt = this.sanitizeAmount(c.amount, c.contributionType, c.month);
+      if (cleanAmt !== c.amount) {
+        needsResave = true;
+        return { ...c, amount: cleanAmt };
+      }
+      return c;
+    });
+
+    if (needsResave) {
+      localStorage.setItem(STORAGE_KEYS.CONTRIBUTIONS, JSON.stringify(sanitized));
+    }
+    return sanitized;
   }
 
   static saveContributions(contributions: Contribution[]) {

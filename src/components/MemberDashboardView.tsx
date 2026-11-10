@@ -180,6 +180,9 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
   // Determine active linked members
   const actualLinkedMembers = linkedMembers.length > 0 ? linkedMembers : (member ? [member] : []);
   const primaryMember = actualLinkedMembers[0] || member;
+  const targetAccountMember = selectedAccountId === 'all'
+    ? primaryMember
+    : (actualLinkedMembers.find((m) => (m.systemId || '').toLowerCase() === selectedAccountId.toLowerCase()) || primaryMember);
   const linkedSystemIds = actualLinkedMembers.map((m) => (m.systemId || '').trim().toLowerCase());
 
   // Filter contributions for this member & linked accounts (accurately reflects actual amount deposited)
@@ -265,7 +268,10 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
   }, [myContributions, selectedAccountId, actualLinkedMembers]);
 
   const effectiveTotalSavingsPaid = useMemo(() => {
-    return effectiveContributions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    return effectiveContributions.reduce(
+      (sum, c) => sum + StorageService.sanitizeAmount(c.amount, c.contributionType, c.month),
+      0
+    );
   }, [effectiveContributions]);
   const effectivePaidMonthsCount = effectiveContributions.length;
 
@@ -815,6 +821,53 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Account Switcher Tabs when multiple accounts exist for this mobile number */}
+                {actualLinkedMembers.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAccountId('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedAccountId === 'all'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>{language === 'bn' ? 'সকল অ্যাকাউন্ট একত্রিত' : 'All Accounts'}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                        selectedAccountId === 'all'
+                          ? 'bg-white/20 text-white'
+                          : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                      }`}>
+                        {actualLinkedMembers.length}
+                      </span>
+                    </button>
+                    {actualLinkedMembers.map((m) => {
+                      const isSelected = selectedAccountId === m.systemId;
+                      return (
+                        <button
+                          key={m.systemId}
+                          type="button"
+                          onClick={() => setSelectedAccountId(m.systemId)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          <span className="truncate max-w-[130px]">{m.name}</span>
+                          <span className={`text-[10px] font-mono px-1 rounded ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                          }`}>
+                            {m.systemId}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Four Metric Cards (Under Select Account) */}
@@ -920,53 +973,112 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
               </div>
             </div>
 
-            {/* Standard Member Account Card */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-100 dark:border-emerald-800">
-                  {primaryMember?.name ? primaryMember.name.charAt(0) : <User className="w-5 h-5" />}
+            {/* Member Account Cards (Single or Multi-Account Grid) */}
+            {actualLinkedMembers.length > 1 && selectedAccountId === 'all' ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-emerald-600" />
+                    <span>{language === 'bn' ? 'এই নম্বরে নিবন্ধিত সকল সদস্য অ্যাকাউন্ট' : 'All Accounts Linked to this Phone'}</span>
+                  </span>
+                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    {language === 'bn' ? 'একত্রিত মোট স্থিতি:' : 'Combined Total:'} ৳{Math.max(totalRecordBalance, effectiveTotalSavingsPaid).toLocaleString()}
+                  </span>
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-bold text-base text-slate-900 dark:text-white">
-                      {primaryMember?.name || currentUser.name}
-                    </h4>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
-                      {language === 'bn' ? 'সদস্য আইডি:' : 'ID:'} {primaryMember?.systemId || currentUser.userId}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {actualLinkedMembers.map((m) => {
+                    const mContribs = myContributions.filter((c) => {
+                      const cSys = (c.memberSystemId || '').toLowerCase();
+                      const mSys = (m.systemId || '').toLowerCase();
+                      return cSys === mSys || (c.memberName && m.name && c.memberName.trim().toLowerCase() === m.name.trim().toLowerCase());
+                    });
+                    const mPaid = mContribs.reduce(
+                      (sum, c) => sum + StorageService.sanitizeAmount(c.amount, c.contributionType, c.month),
+                      0
+                    );
+                    const mBalance = Math.max(m.currentBalance || 0, mPaid);
+                    return (
+                      <div
+                        key={m.systemId}
+                        className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between gap-3 hover:border-emerald-300 dark:hover:border-emerald-700 transition-all cursor-pointer"
+                        onClick={() => setSelectedAccountId(m.systemId)}
+                        title={language === 'bn' ? 'শুধুমাত্র এই অ্যাকাউন্টের তথ্য দেখতে ক্লিক করুন' : 'Click to filter this account'}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-base border border-emerald-100 dark:border-emerald-800">
+                            {m.name.charAt(0)}
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                              <span>{m.name}</span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
+                                {m.systemId}
+                              </span>
+                            </h4>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                              {mContribs.length} {language === 'bn' ? 'টি কিস্তি পরিশোধিত' : 'installments paid'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 block">{language === 'bn' ? 'জমা স্থিতি' : 'Savings Balance'}</span>
+                          <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                            ৳{mBalance.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-100 dark:border-emerald-800">
+                    {targetAccountMember?.name ? targetAccountMember.name.charAt(0) : <User className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                        {targetAccountMember?.name || currentUser.name}
+                      </h4>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                        {language === 'bn' ? 'সদস্য আইডি:' : 'ID:'} {targetAccountMember?.systemId || currentUser.userId}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      {language === 'bn' ? 'মোবাইল নম্বর:' : 'Phone:'}{' '}
+                      <span className="font-medium text-slate-700 dark:text-slate-300">
+                        {targetAccountMember?.phone || currentUser.phone}
+                      </span>
+                      {' • '}
+                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                        ✓ {language === 'bn' ? 'সক্রিয় সদস্য' : 'Active Member'}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 sm:border-l sm:border-slate-100 dark:sm:border-slate-800 sm:pl-5">
+                  <div>
+                    <span className="text-[11px] text-slate-400 block">
+                      {language === 'bn' ? 'মোট পরিশোধিত সঞ্চয়' : 'Total Savings Paid'}
+                    </span>
+                    <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                      ৳{Math.max(targetAccountMember?.currentBalance || 0, effectiveTotalSavingsPaid).toLocaleString()}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {language === 'bn' ? 'মোবাইল নম্বর:' : 'Phone:'}{' '}
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
-                      {primaryMember?.phone || currentUser.phone}
+                  <div className="pl-3 border-l border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] text-slate-400 block">
+                      {language === 'bn' ? 'পরিশোধিত কিস্তি' : 'Paid Installments'}
                     </span>
-                    {' • '}
-                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                      ✓ {language === 'bn' ? 'সক্রিয় সদস্য' : 'Active Member'}
+                    <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      {effectiveContributions.length} {language === 'bn' ? 'টি মাস' : 'months'}
                     </span>
-                  </p>
+                  </div>
                 </div>
               </div>
-
-              <div className="flex items-center gap-4 sm:border-l sm:border-slate-100 dark:sm:border-slate-800 sm:pl-5">
-                <div>
-                  <span className="text-[11px] text-slate-400 block">
-                    {language === 'bn' ? 'মোট পরিশোধিত সঞ্চয়' : 'Total Savings Paid'}
-                  </span>
-                  <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">
-                    ৳{Math.max(primaryMember?.currentBalance || 0, effectiveTotalSavingsPaid).toLocaleString()}
-                  </span>
-                </div>
-                <div className="pl-3 border-l border-slate-200 dark:border-slate-800">
-                  <span className="text-[11px] text-slate-400 block">
-                    {language === 'bn' ? 'পরিশোধিত কিস্তি' : 'Paid Installments'}
-                  </span>
-                  <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                    {effectiveContributions.length} {language === 'bn' ? 'টি মাস' : 'months'}
-                  </span>
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* Complete Payment History (মাসিক সঞ্চয় পরিশোধের পূর্ণাঙ্গ খতিয়ান) */}
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 shadow-xs">
@@ -1030,7 +1142,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                               {formatMonthName(c.month) || c.month}
                             </td>
                             <td className="p-3 font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                              ৳{Number(c.amount || 0).toLocaleString()}
+                              ৳{StorageService.sanitizeAmount(c.amount, c.contributionType, c.month).toLocaleString()}
                               {c.lateFee && Number(c.lateFee) > 0 && (
                                 <span className="block text-[10px] text-amber-600 font-normal">
                                   +{language === 'bn' ? 'বিলম্ব ফি' : 'Late fee'} ৳{Number(c.lateFee)}
