@@ -92,12 +92,18 @@ const VALID_SPA_TABS = new Set([
 
 function getInitialTabFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
-  // 1. Check URL hash (e.g., #/members or #members)
-  const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase().trim();
-  if (hash && VALID_SPA_TABS.has(hash)) {
-    return hash;
+  // If any hash (such as #/, #/members, or #members) exists in the URL, remove it immediately
+  if (window.location.hash) {
+    const rawHash = window.location.hash.replace(/^#\/?/, '').toLowerCase().trim();
+    const cleanUrl = window.location.pathname.replace(/\/+$/, '') || '/';
+    try {
+      window.history.replaceState(null, '', cleanUrl + window.location.search);
+    } catch {}
+    if (rawHash && VALID_SPA_TABS.has(rawHash)) {
+      return rawHash;
+    }
   }
-  // 2. Check URL pathname for clean URLs on cPanel rewrite (e.g., /members or /loans)
+  // Check URL pathname for clean URLs (e.g., /members or /loans)
   const path = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase().trim();
   if (path && VALID_SPA_TABS.has(path)) {
     return path;
@@ -135,9 +141,12 @@ export default function App() {
   const setCurrentTab = (tab: string) => {
     setCurrentTabState(tab);
     if (typeof window !== 'undefined') {
-      const targetHash = `#${tab}`;
-      if (window.location.hash !== targetHash) {
-        window.history.pushState({ tab }, '', targetHash);
+      // Clean URL: Keep clean path without any '#' or '#/'
+      const targetPath = tab === 'dashboard' ? '/' : `/${tab}`;
+      if (window.location.pathname !== targetPath || window.location.hash) {
+        try {
+          window.history.pushState({ tab }, '', targetPath);
+        } catch {}
       }
     }
   };
@@ -154,13 +163,29 @@ export default function App() {
     mode: AuthMode;
   }>({ isOpen: false, mode: 'login' });
 
-  // Sync routing state with browser Back/Forward navigation & direct URL changes
+  // Clean URL synchronization & browser Back/Forward navigation (No #/ in URL)
   useEffect(() => {
+    // Immediately remove any existing hash (such as # or #/) on initial mount
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const cleanPath = window.location.pathname.replace(/\/+$/, '') || '/';
+      try {
+        window.history.replaceState(null, '', cleanPath + window.location.search);
+      } catch {}
+    }
+
     const handleUrlChange = () => {
-      const hash = window.location.hash.toLowerCase();
-      if (hash === '#/login/member') {
+      // Ensure no hash remains if triggered
+      if (window.location.hash) {
+        const cleanPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        try {
+          window.history.replaceState(null, '', cleanPath + window.location.search);
+        } catch {}
+      }
+
+      const p = window.location.pathname.toLowerCase();
+      if (p === '/login/member' || p === '/login') {
         setAuthModalState({ isOpen: true, mode: 'member_login' });
-      } else if (hash === '#/login/admin') {
+      } else if (p === '/login/admin') {
         setAuthModalState({ isOpen: true, mode: 'admin_login' });
       } else {
         const tab = getInitialTabFromUrl();
@@ -171,21 +196,19 @@ export default function App() {
     };
 
     window.addEventListener('popstate', handleUrlChange);
-    window.addEventListener('hashchange', handleUrlChange);
 
-    // Initial hash inspection for logins
+    // Initial inspection for clean login paths
     if (typeof window !== 'undefined') {
-      const h = window.location.hash.toLowerCase();
-      if (h === '#/login/member') {
+      const p = window.location.pathname.toLowerCase();
+      if (p === '/login/member') {
         setAuthModalState({ isOpen: true, mode: 'member_login' });
-      } else if (h === '#/login/admin') {
+      } else if (p === '/login/admin') {
         setAuthModalState({ isOpen: true, mode: 'admin_login' });
       }
     }
 
     return () => {
       window.removeEventListener('popstate', handleUrlChange);
-      window.removeEventListener('hashchange', handleUrlChange);
     };
   }, []);
 
