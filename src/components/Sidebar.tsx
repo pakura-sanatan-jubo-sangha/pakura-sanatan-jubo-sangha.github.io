@@ -105,7 +105,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'dashboard', label: t.navDashboard, icon: LayoutDashboard },
         { id: 'members', label: t.navMembers, icon: Users },
         { id: 'contributions', label: t.navContributions, icon: PiggyBank },
-        { id: 'loans', label: language === 'bn' ? 'ঋণ ব্যবস্থাপনা (১০% লাভ)' : 'Loan Management', icon: CreditCard },
+        { id: 'loans', label: language === 'bn' ? 'ঋণ ব্যবস্থাপনা' : 'Loan Management', icon: CreditCard },
         {
           id: 'withdrawals',
           label: language === 'bn' ? 'সঞ্চয় ও মুনাফা উত্তোলন' : 'Withdrawals & Profit',
@@ -240,10 +240,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
       </nav>
 
-      {/* Language & Theme Controls (Moved into Navigation Menu) */}
+      {/* Language & Theme Controls (Single Language Toggle Button) */}
       <div className="pt-2.5 pb-1 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2">
         <button
-          onClick={onLanguageToggle}
+          type="button"
+          onClick={() => {
+            if (onLanguageToggle) onLanguageToggle();
+          }}
           className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700 transition-colors shadow-2xs cursor-pointer"
           title="Switch Language (বাংলা / English)"
         >
@@ -252,7 +255,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={onThemeToggle}
+          type="button"
+          onClick={() => {
+            if (onThemeToggle) onThemeToggle();
+          }}
           className="p-2 rounded-xl text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700 transition-colors shadow-2xs cursor-pointer flex items-center justify-center"
           title={theme === 'light' ? t.nightMode : t.dayMode}
           aria-label="Toggle Day / Night mode"

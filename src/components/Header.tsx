@@ -254,11 +254,27 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Right: User profile, notifications & actions (when logged in) */}
+          {/* Right: User profile, notifications & actions (Login button when view-only) */}
           <div className="flex items-center gap-2">
+            {/* View-Only Mode Login Button */}
+            {isViewOnly && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenLogin) onOpenLogin();
+                  else if (onOpenMemberLogin) onOpenMemberLogin();
+                  else if (onOpenAdminLogin) onOpenAdminLogin();
+                  else setShowAdminLoginModal(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? 'লগইন' : 'Login'}</span>
+              </button>
+            )}
+
             {!isViewOnly && (
               <>
-
                 {/* 1. User Profile Badge with Dropdown Menu */}
                 <div className="relative" ref={userMenuRef}>
                   <button
@@ -300,7 +316,7 @@ export const Header: React.FC<HeaderProps> = ({
                           className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors cursor-pointer mt-0.5"
                         >
                           <Lock className="w-3.5 h-3.5" />
-                          <span>{language === 'bn' ? 'লগআউট (Logout)' : 'Logout'}</span>
+                          <span>{language === 'bn' ? 'লগআউট' : 'Logout'}</span>
                         </button>
                       )}
                     </div>
@@ -434,7 +450,7 @@ export const Header: React.FC<HeaderProps> = ({
                           }}
                           className="w-full py-2.5 px-3 text-center text-xs font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors cursor-pointer block"
                         >
-                          {language === 'bn' ? 'সকল নোটিফিকেশন দেখুন (View All) →' : 'View All Notifications →'}
+                          {language === 'bn' ? 'সকল নোটিফিকেশন দেখুন →' : 'View All Notifications →'}
                         </button>
                         {onLogout && (
                           <button
@@ -446,7 +462,7 @@ export const Header: React.FC<HeaderProps> = ({
                             className="w-full py-2 px-3 text-center text-xs font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                           >
                             <Lock className="w-3 h-3" />
-                            <span>{language === 'bn' ? 'লগআউট (Logout)' : 'Logout'}</span>
+                            <span>{language === 'bn' ? 'লগআউট' : 'Logout'}</span>
                           </button>
                         )}
                       </div>

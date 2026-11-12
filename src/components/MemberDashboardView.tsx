@@ -884,7 +884,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                     ৳{effectiveTotalSavingsPaid.toLocaleString()}
                   </div>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 block">
-                    {language === 'bn' ? 'Credited to Fund (তহবিলে জমা)' : 'Credited to Fund'}
+                    {language === 'bn' ? 'তহবিলে জমা হয়েছে' : 'Credited to Fund'}
                   </span>
                 </div>
 
@@ -934,7 +934,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                         ? 'অনতিবিলম্বে পরিশোধযোগ্য'
                         : 'Due for payment'
                       : language === 'bn'
-                      ? 'কোনো বকেয়া নেই (Zero dues ✓)'
+                      ? 'কোনো বকেয়া নেই ✓'
                       : 'Zero dues ✓'}
                   </span>
                 </div>

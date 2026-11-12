@@ -1227,9 +1227,9 @@ export class FirebaseSyncService {
               phone: c?.phone || '',
               amount: (() => {
                 const a = Number(c?.amount || 0);
-                if (a === 1000 && (c?.contributionType === 'regular' || !c?.contributionType)) return 100;
-                if (a === 6000) return 600;
-                if (a === 3000) return 300;
+                if (a === 1000 && c?.contributionType !== 'seasonal_booster' && c?.contributionType !== 'special_fund') return 100;
+                if (a === 6000 && c?.contributionType !== 'seasonal_booster') return 600;
+                if (a === 3000 && c?.contributionType !== 'seasonal_booster') return 300;
                 return a;
               })(),
               contributionDate: c?.contributionDate || '',
@@ -1463,9 +1463,9 @@ export class FirebaseSyncService {
               phone: c?.phone || c?.memberPhone || '',
               amount: (() => {
                 const a = Number(c?.amount || c?.contributionAmount || 0);
-                if (a === 1000 && (c?.contributionType === 'regular' || !c?.contributionType)) return 100;
-                if (a === 6000) return 600;
-                if (a === 3000) return 300;
+                if (a === 1000 && c?.contributionType !== 'seasonal_booster' && c?.contributionType !== 'special_fund') return 100;
+                if (a === 6000 && c?.contributionType !== 'seasonal_booster') return 600;
+                if (a === 3000 && c?.contributionType !== 'seasonal_booster') return 300;
                 return a;
               })(),
               contributionDate: c?.contributionDate || c?.date || '',

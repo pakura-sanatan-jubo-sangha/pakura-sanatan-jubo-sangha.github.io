@@ -158,7 +158,7 @@ export const t = {
     printReceipt: 'রশিদ প্রিন্ট',
     saveSettings: 'সেটিংস সংরক্ষণ',
     addUser: 'নতুন ব্যবহারকারী যোগ',
-    role: 'ভূমিকা (Role)',
+    role: 'ভূমিকা',
     
     // Admin Security & Access Control
     adminLogin: 'প্রধান অ্যাডমিন লগইন',
@@ -178,9 +178,9 @@ export const t = {
     adminPasswordChangedSuccess: 'অ্যাডমিন পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে!',
     stepByStepSync: 'ধাপে ধাপে সম্পূর্ণ সিঙ্ক (১৪টি ট্যাব)',
     stepByStepSyncDesc: 'ওয়েবসাইট এর প্রতিটি ডাটা ও ট্যাব ক্রমানুসারে গুগল শিটে সুন্দরভাবে রেকর্ড করা হবে।',
-    autoSaveEnabled: 'অটো-সেভ সক্রিয় (Auto-Save)',
-    dayMode: 'দিন মোড (Day)',
-    nightMode: 'রাত মোড (Night)',
+    autoSaveEnabled: 'অটো-সেভ সক্রিয়',
+    dayMode: 'দিন মোড',
+    nightMode: 'রাত মোড',
     autoSavingToSheets: 'গুগল শিটে সেভ হচ্ছে...',
     savedToSheets: 'গুগল শিটে সংরক্ষিত ✓',
   },

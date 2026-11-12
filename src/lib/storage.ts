@@ -100,6 +100,8 @@ export const INITIAL_SETTINGS: AppSettings = {
   autoSyncSheets: true,
   maxWithdrawalPercentage: 70, // 70% limit
   minReserveBalance: 500, // ৳500 minimum reserve
+  language: 'bn',
+  theme: 'light',
 };
 
 // Phone normalization helper (handles Bengali digits, country code, spaces)
@@ -1807,7 +1809,16 @@ export class StorageService {
       return INITIAL_SETTINGS;
     }
     try {
-      return { ...INITIAL_SETTINGS, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.language !== 'bn' && parsed.language !== 'en') {
+          parsed.language = 'bn';
+        }
+        if (parsed.theme !== 'light' && parsed.theme !== 'dark') {
+          parsed.theme = 'light';
+        }
+      }
+      return { ...INITIAL_SETTINGS, ...(parsed || {}) };
     } catch {
       return INITIAL_SETTINGS;
     }
@@ -1830,9 +1841,10 @@ export class StorageService {
     const num = typeof amount === 'string' ? parseFloat(amount) : Number(amount || 0);
     if (isNaN(num) || num <= 0) return 100;
     // Auto-repair string concatenation bugs (e.g. 100 + "0" = 1000, 600 + "0" = 6000, 300 + "0" = 3000)
-    if (num === 1000 && (type === 'regular' || !type)) return 100;
-    if (num === 6000) return 600;
-    if (num === 3000) return 300;
+    // Regular monthly savings is ৳100. Any 1000 value not marked as a seasonal booster or special fund is the 100 + "0" concatenation glitch.
+    if (num === 1000 && type !== 'seasonal_booster' && type !== 'special_fund') return 100;
+    if (num === 6000 && type !== 'seasonal_booster') return 600;
+    if (num === 3000 && type !== 'seasonal_booster') return 300;
     return num;
   }
 
@@ -3663,8 +3675,9 @@ export class StorageService {
     return (localStorage.getItem(STORAGE_KEYS.LANGUAGE) as 'bn' | 'en') || 'bn';
   }
 
-  static setLanguage(lang: 'bn' | 'en') {
-    localStorage.setItem(STORAGE_KEYS.LANGUAGE, lang);
+  static setLanguage(lang: any) {
+    const valid: 'bn' | 'en' = lang === 'en' ? 'en' : 'bn';
+    localStorage.setItem(STORAGE_KEYS.LANGUAGE, valid);
   }
 
   static getTheme(): 'light' | 'dark' {
@@ -3714,8 +3727,25 @@ export class StorageService {
   // --- Convenience & State Wrappers for App.tsx ---
   static updateSettings(updates: Partial<AppSettings>): FullAppData {
     const current = this.getSettings();
-    const updated = { ...current, ...updates };
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+    const safeUpdates: Partial<AppSettings> = { ...updates };
+    if (safeUpdates.language && safeUpdates.language !== 'bn' && safeUpdates.language !== 'en') {
+      delete safeUpdates.language;
+    }
+    if (safeUpdates.theme && safeUpdates.theme !== 'light' && safeUpdates.theme !== 'dark') {
+      delete safeUpdates.theme;
+    }
+    const updated = { ...current, ...safeUpdates };
+    try {
+      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to stringify settings:', e);
+    }
+    if (safeUpdates.language) {
+      localStorage.setItem(STORAGE_KEYS.LANGUAGE, safeUpdates.language);
+    }
+    if (safeUpdates.theme) {
+      localStorage.setItem(STORAGE_KEYS.THEME, safeUpdates.theme);
+    }
     FirebaseSyncService.syncSettings(updated).catch(() => {});
     return this.getAppData();
   }

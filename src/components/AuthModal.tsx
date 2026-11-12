@@ -394,7 +394,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }`}
           >
             <LogIn className="w-4 h-4 text-amber-500" />
-            <span>{language === 'bn' ? 'লগইন (Login)' : 'Login'}</span>
+            <span>{language === 'bn' ? 'লগইন' : 'Login'}</span>
           </button>
 
           <button
@@ -818,7 +818,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   }}
                   className="font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
                 >
-                  {language === 'bn' ? 'লগইন করুন (Login)' : 'Log In'}
+                  {language === 'bn' ? 'লগইন করুন' : 'Log In'}
                 </button>
               </div>
             </form>

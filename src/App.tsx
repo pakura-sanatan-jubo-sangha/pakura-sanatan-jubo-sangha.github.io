@@ -108,8 +108,8 @@ function getInitialTabFromUrl(): string | null {
 export default function App() {
   // 1. Core Application State
   const [appData, setAppData] = useState<FullAppData>(() => StorageService.loadData());
-  const [language, setLanguage] = useState<Language>(() => appData.settings.language || 'bn');
-  const [theme, setTheme] = useState<Theme>(() => appData.settings.theme || 'light');
+  const [language, setLanguage] = useState<Language>(() => StorageService.getLanguage() || appData.settings.language || 'bn');
+  const [theme, setTheme] = useState<Theme>(() => StorageService.getTheme() || appData.settings.theme || 'light');
   const [currentUser, setCurrentUser] = useState<UserAccount>(() => StorageService.getCurrentUser());
 
   const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
@@ -342,9 +342,15 @@ export default function App() {
   };
 
   // Switch language
-  const handleToggleLanguage = () => {
-    const nextLang: Language = language === 'bn' ? 'en' : 'bn';
+  const handleToggleLanguage = (specificLang?: unknown) => {
+    const nextLang: Language =
+      specificLang === 'bn' || specificLang === 'en'
+        ? specificLang
+        : language === 'bn'
+        ? 'en'
+        : 'bn';
     setLanguage(nextLang);
+    StorageService.setLanguage(nextLang);
     const updated = StorageService.updateSettings({ language: nextLang });
     setAppData(updated);
   };
@@ -353,6 +359,7 @@ export default function App() {
   const handleToggleTheme = () => {
     const nextTheme: Theme = theme === 'light' ? 'dark' : 'light';
     setTheme(nextTheme);
+    StorageService.setTheme(nextTheme);
     const updated = StorageService.updateSettings({ theme: nextTheme });
     setAppData(updated);
   };
@@ -1228,7 +1235,7 @@ export default function App() {
                   className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <LogIn className="w-4 h-4" />
-                  <span>{language === 'bn' ? 'Login to Account' : 'Login to Account'}</span>
+                  <span>{language === 'bn' ? 'অ্যাকাউন্টে লগইন করুন' : 'Login to Account'}</span>
                 </button>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-center">
@@ -1288,7 +1295,7 @@ export default function App() {
                     className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
                   >
                     <Eye className="w-4 h-4" />
-                    <span>{language === 'bn' ? 'পপআপ ভিউ (View All)' : 'Popup View'}</span>
+                    <span>{language === 'bn' ? 'পপআপ ভিউ' : 'Popup View'}</span>
                   </button>
                 </div>
               </div>
