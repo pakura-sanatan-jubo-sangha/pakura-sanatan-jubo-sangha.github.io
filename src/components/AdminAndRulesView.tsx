@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { getTranslation, formatMemberPhone } from '../lib/translations';
 import { isStrictMainAdmin, MAIN_ADMIN_EMAIL, StorageService } from '../lib/storage';
+import { FirebaseSyncService } from '../lib/firebaseSync';
 import {
   ShieldAlert,
   UserPlus,
@@ -135,6 +136,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
 
   // Self-service Admin Password Change states (for both Main Admin & Auxiliary Admins)
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [passConfirmEmailInput, setPassConfirmEmailInput] = useState('');
   const [currPassInput, setCurrPassInput] = useState('');
   const [newPassInput, setNewPassInput] = useState('');
   const [confirmPassInput, setConfirmPassInput] = useState('');
@@ -211,11 +213,20 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
     setUserToDelete(null);
   };
 
-  // Handle Self-Service Admin Password Change (Main Admin or Auxiliary Admin -> Syncs to Firebase)
+  // Handle Self-Service Admin Password Change (Main Admin or Auxiliary Admin -> Verified & Synced to Firebase)
   const handleAdminSelfPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassChangeError(null);
     setPassChangeSuccess(null);
+
+    if (!passConfirmEmailInput.trim()) {
+      setPassChangeError(
+        language === 'bn'
+          ? 'নিরাপত্তার স্বার্থে আপনার অ্যাকাউন্টের নিবন্ধিত জিমেইল ঠিকানা নিজ হাতে লিখুন।'
+          : 'Please manually enter your registered account Gmail address.'
+      );
+      return;
+    }
 
     if (newPassInput.trim() !== confirmPassInput.trim()) {
       setPassChangeError(
@@ -235,6 +246,15 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
 
     setIsUpdatingPass(true);
     try {
+      const emailCheck = await FirebaseSyncService.verifyAccountEmailInFirebase(
+        currentUser,
+        passConfirmEmailInput
+      );
+      if (!emailCheck.authorized) {
+        setPassChangeError(emailCheck.message);
+        return;
+      }
+
       const res = isMainAdmin
         ? await StorageService.updateAdminPasswordWithFirebaseSync(
             currPassInput.trim(),
@@ -255,6 +275,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
             ? 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে এবং ফায়ারবেসে হালনাগাদ করা হয়েছে!'
             : 'Password updated successfully and synced to Firebase!';
         setPassChangeSuccess(msg);
+        setPassConfirmEmailInput('');
         setCurrPassInput('');
         setNewPassInput('');
         setConfirmPassInput('');
@@ -751,6 +772,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                 onClick={() => {
                   setPassChangeError(null);
                   setPassChangeSuccess(null);
+                  setPassConfirmEmailInput('');
                   setCurrPassInput('');
                   setNewPassInput('');
                   setConfirmPassInput('');
@@ -2066,7 +2088,11 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
 
             <div className="mt-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
               <div className="font-bold text-slate-900 dark:text-white">{currentUser.name || currentUser.displayName}</div>
-              <div className="text-[11px] text-slate-500 font-mono">{currentUser.email}</div>
+              <div className="text-[11px] text-slate-500">
+                {language === 'bn'
+                  ? 'নিরাপত্তার স্বার্থে আপনার নিবন্ধিত জিমেইলটি নিজ হাতে লিখে নিশ্চিত করুন।'
+                  : 'For security, manually enter your registered Gmail address to confirm.'}
+              </div>
             </div>
 
             {passChangeError && (
@@ -2083,7 +2109,23 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleAdminSelfPasswordSubmit} className="mt-4 space-y-3">
+            <form onSubmit={handleAdminSelfPasswordSubmit} className="mt-4 space-y-3" autoComplete="off">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'নিবন্ধিত জিমেইল লিখুন (Registered Gmail)' : 'Enter Registered Gmail'} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  name="admin-rules-verify-registered-email"
+                  autoComplete="new-password"
+                  required
+                  value={passConfirmEmailInput}
+                  onChange={(e) => setPassConfirmEmailInput(e.target.value)}
+                  placeholder={language === 'bn' ? 'ফায়ারবেসে নিবন্ধিত জিমেইল নিজ হাতে লিখুন...' : 'Manually type registered Gmail...'}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                />
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   {language === 'bn' ? 'বর্তমান পাসওয়ার্ড' : 'Current Password'} <span className="text-red-500">*</span>

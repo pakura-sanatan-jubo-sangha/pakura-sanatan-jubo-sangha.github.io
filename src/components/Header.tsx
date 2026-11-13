@@ -132,6 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   // Self-service admin/committee password change modal state
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [confirmEmailInput, setConfirmEmailInput] = useState('');
   const [currPass, setCurrPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
@@ -209,6 +210,15 @@ export const Header: React.FC<HeaderProps> = ({
     setPassErr(null);
     setPassSuccess(null);
 
+    if (!confirmEmailInput.trim()) {
+      setPassErr(
+        language === 'bn'
+          ? 'নিরাপত্তার স্বার্থে আপনার অ্যাকাউন্টের নিবন্ধিত জিমেইল ঠিকানা নিজ হাতে লিখুন।'
+          : 'Please manually enter your registered account Gmail address.'
+      );
+      return;
+    }
+
     if (newPass.trim() !== confirmPass.trim()) {
       setPassErr(
         language === 'bn' ? 'নতুন পাসওয়ার্ড দুটি মেলেনি!' : 'New passwords do not match!'
@@ -227,6 +237,15 @@ export const Header: React.FC<HeaderProps> = ({
 
     setIsUpdatingPass(true);
     try {
+      const emailCheck = await FirebaseSyncService.verifyAccountEmailInFirebase(
+        currentUser,
+        confirmEmailInput
+      );
+      if (!emailCheck.authorized) {
+        setPassErr(emailCheck.message);
+        return;
+      }
+
       const res = isStrictMainAdmin(currentUser)
         ? await StorageService.updateAdminPasswordWithFirebaseSync(
             currPass.trim(),
@@ -247,6 +266,7 @@ export const Header: React.FC<HeaderProps> = ({
             ? 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে এবং ফায়ারবেসে হালনাগাদ করা হয়েছে!'
             : 'Password updated successfully and synced to Firebase!';
         setPassSuccess(msg);
+        setConfirmEmailInput('');
         setCurrPass('');
         setNewPass('');
         setConfirmPass('');
@@ -409,6 +429,7 @@ export const Header: React.FC<HeaderProps> = ({
                             setShowUserMenu(false);
                             setPassErr(null);
                             setPassSuccess(null);
+                            setConfirmEmailInput('');
                             setCurrPass('');
                             setNewPass('');
                             setConfirmPass('');
@@ -752,8 +773,8 @@ export const Header: React.FC<HeaderProps> = ({
                   <h3 className="font-bold text-sm text-slate-900 dark:text-white">
                     {language === 'bn' ? 'অ্যাডমিন পাসওয়ার্ড পরিবর্তন' : 'Change Admin Password'}
                   </h3>
-                  <p className="text-[11px] text-slate-500 font-mono truncate max-w-[240px]">
-                    {currentUser.email || currentUser.displayName}
+                  <p className="text-[11px] text-slate-500 truncate max-w-[240px]">
+                    {currentUser.displayName || currentUser.name}
                   </p>
                 </div>
               </div>
@@ -780,7 +801,23 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleHeaderPasswordChangeSubmit} className="mt-4 space-y-3">
+            <form onSubmit={handleHeaderPasswordChangeSubmit} className="mt-4 space-y-3" autoComplete="off">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'নিবন্ধিত জিমেইল লিখুন (Registered Gmail)' : 'Enter Registered Gmail'}
+                </label>
+                <input
+                  type="email"
+                  name="header-verify-registered-email"
+                  autoComplete="new-password"
+                  required
+                  value={confirmEmailInput}
+                  onChange={(e) => setConfirmEmailInput(e.target.value)}
+                  placeholder={language === 'bn' ? 'ফায়ারবেসে নিবন্ধিত জিমেইল নিজ হাতে লিখুন...' : 'Manually type registered Gmail...'}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   {language === 'bn' ? 'বর্তমান পাসওয়ার্ড' : 'Current Password'}

@@ -4,6 +4,7 @@ import {
   getDocs,
   getDocsFromServer,
   getDoc,
+  getDocFromServer,
   setDoc,
   deleteDoc,
   query,
@@ -602,6 +603,158 @@ export class FirebaseSyncService {
     } catch (error) {
       console.warn('Firestore user/admin lookup notice:', error);
       return { user: null };
+    }
+  }
+
+  /**
+   * Strictly verify the entered Gmail address against the exact Main Admin email registered in Firebase.
+   * Ensures only the registered Main Admin Gmail in Firestore (/admins/USR-MAIN-ADMIN or /users/USR-MAIN-ADMIN)
+   * can authorize Database Reset (৳0) or Main Admin Password Reset.
+   */
+  static async verifyMainAdminResetEmailInFirebase(
+    enteredEmail: string,
+    executingUser?: UserAccount | null
+  ): Promise<{ authorized: boolean; registeredEmail?: string; message: string }> {
+    const cleanEntered = (enteredEmail || '').trim().toLowerCase();
+    if (!cleanEntered) {
+      return {
+        authorized: false,
+        message: 'অনুগ্রহ করে ফায়ারবেসে নিবন্ধিত অনুমোদিত জিমেইল ঠিকানাটি নিজ হাতে লিখুন।',
+      };
+    }
+
+    if (!isStrictMainAdminAccount(executingUser)) {
+      return {
+        authorized: false,
+        message: 'অননুমোদিত অ্যাক্সেস! শুধুমাত্র প্রধান অ্যাডমিন এই রিসেট সম্পন্ন করতে পারবেন।',
+      };
+    }
+
+    try {
+      const [adminDocSnap, userDocSnap] = await Promise.all([
+        getDocFromServer(doc(db, 'admins', 'USR-MAIN-ADMIN')).catch(() =>
+          getDoc(doc(db, 'admins', 'USR-MAIN-ADMIN'))
+        ),
+        getDocFromServer(doc(db, 'users', 'USR-MAIN-ADMIN')).catch(() =>
+          getDoc(doc(db, 'users', 'USR-MAIN-ADMIN'))
+        ),
+      ]);
+
+      const adminDocEmail = adminDocSnap.exists()
+        ? String(adminDocSnap.data()?.email || '').trim().toLowerCase()
+        : '';
+      const userDocEmail = userDocSnap.exists()
+        ? String(userDocSnap.data()?.email || '').trim().toLowerCase()
+        : '';
+
+      if (!adminDocSnap.exists() || !adminDocEmail) {
+        const nowIso = new Date().toISOString();
+        const seedEmail = userDocEmail || MAIN_ADMIN_EMAIL_CONST.toLowerCase();
+        await setDoc(
+          doc(db, 'admins', 'USR-MAIN-ADMIN'),
+          {
+            uid: 'USR-MAIN-ADMIN',
+            userId: 'USR-MAIN-ADMIN',
+            email: seedEmail,
+            name: 'Kajol Chandra Das',
+            displayName: 'Kajol Chandra Das (Main Admin)',
+            role: 'admin',
+            status: 'active',
+            isMainAdmin: true,
+            updatedAt: nowIso,
+            createdAt: nowIso,
+          },
+          { merge: true }
+        ).catch(() => {});
+      }
+
+      const registeredEmail = adminDocEmail || userDocEmail || MAIN_ADMIN_EMAIL_CONST.toLowerCase();
+
+      if (cleanEntered !== registeredEmail) {
+        await this.syncActivityLog({
+          logId: `LOG-SEC-${Date.now()}`,
+          dateTime: new Date().toLocaleString('bn-BD'),
+          timestamp: new Date().toISOString(),
+          userId: executingUser?.userId || 'UNKNOWN',
+          userDisplayName: executingUser?.displayName || 'Unknown',
+          role: executingUser?.role || 'member',
+          action: 'FAILED_RESET_EMAIL_VERIFICATION',
+          module: 'Security',
+          description: `ফায়ারবেসে নিবন্ধিত অনুমোদিত জিমেইল না মেলায় রিসেট প্রচেষ্টা প্রতিহত করা হয়েছে (প্রদত্ত ইমেইল: ${cleanEntered})`,
+        }).catch(() => {});
+
+        return {
+          authorized: false,
+          message:
+            'ভুল জিমেইল ঠিকানা! ফায়ারবেসে এই অ্যাকাউন্টের জন্য নিবন্ধিত সঠিক অনুমোদিত জিমেইল না দিলে রিসেট কার্যকর হবে না।',
+        };
+      }
+
+      return {
+        authorized: true,
+        registeredEmail,
+        message: 'ফায়ারবেসে নিবন্ধিত অনুমোদিত জিমেইল যাচাই সফল হয়েছে।',
+      };
+    } catch (error: any) {
+      return {
+        authorized: false,
+        message: error?.message || 'ফায়ারবেসের সাথে জিমেইল যাচাই করতে সমস্যা হয়েছে।',
+      };
+    }
+  }
+
+  /**
+   * Verify that a manually entered email matches the exact email registered in Firebase for the logged-in admin/user.
+   */
+  static async verifyAccountEmailInFirebase(
+    user: UserAccount,
+    enteredEmail: string
+  ): Promise<{ authorized: boolean; registeredEmail?: string; message: string }> {
+    const cleanEntered = (enteredEmail || '').trim().toLowerCase();
+    if (!cleanEntered) {
+      return {
+        authorized: false,
+        message: 'অনুগ্রহ করে আপনার অ্যাকাউন্টের নিবন্ধিত জিমেইল ঠিকানাটি লিখুন।',
+      };
+    }
+
+    if (isStrictMainAdminAccount(user)) {
+      return this.verifyMainAdminResetEmailInFirebase(cleanEntered, user);
+    }
+
+    try {
+      const targetId = user.userId;
+      const [adminDocSnap, userDocSnap] = await Promise.all([
+        getDocFromServer(doc(db, 'admins', targetId)).catch(() => getDoc(doc(db, 'admins', targetId))),
+        getDocFromServer(doc(db, 'users', targetId)).catch(() => getDoc(doc(db, 'users', targetId))),
+      ]);
+
+      const registeredEmail = (
+        (adminDocSnap.exists() ? String(adminDocSnap.data()?.email || '') : '') ||
+        (userDocSnap.exists() ? String(userDocSnap.data()?.email || '') : '') ||
+        (user.email || '')
+      )
+        .trim()
+        .toLowerCase();
+
+      if (!registeredEmail || cleanEntered !== registeredEmail) {
+        return {
+          authorized: false,
+          message:
+            'ভুল জিমেইল ঠিকানা! ফায়ারবেসে আপনার অ্যাকাউন্টের জন্য নিবন্ধিত সঠিক জিমেইলটি লিখুন।',
+        };
+      }
+
+      return {
+        authorized: true,
+        registeredEmail,
+        message: 'ফায়ারবেসে নিবন্ধিত জিমেইল যাচাই সফল হয়েছে।',
+      };
+    } catch (error: any) {
+      return {
+        authorized: false,
+        message: error?.message || 'ফায়ারবেসে জিমেইল যাচাই করতে সমস্যা হয়েছে।',
+      };
     }
   }
 

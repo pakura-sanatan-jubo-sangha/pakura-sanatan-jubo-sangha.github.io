@@ -61,6 +61,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetConfirmEmail, setResetConfirmEmail] = useState('');
   const [resetEmailError, setResetEmailError] = useState<string | null>(null);
+  const [isVerifyingReset, setIsVerifyingReset] = useState(false);
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [firebaseSyncLoading, setFirebaseSyncLoading] = useState(false);
@@ -70,6 +71,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   } | null>(null);
 
   // Admin Password Change state
+  const [passwordConfirmEmail, setPasswordConfirmEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -101,6 +103,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setPasswordError(null);
     setPasswordSuccess(null);
 
+    if (!passwordConfirmEmail.trim()) {
+      setPasswordError(
+        language === 'bn'
+          ? 'নিরাপত্তার স্বার্থে ফায়ারবেসে নিবন্ধিত আপনার অনুমোদিত জিমেইল ঠিকানাটি নিজ হাতে লিখুন।'
+          : 'For security, please manually enter the authorized Gmail registered in Firebase.'
+      );
+      return;
+    }
+
     if (newPassword !== confirmPassword) {
       setPasswordError(
         language === 'bn' ? 'নতুন পাসওয়ার্ড দুটি মেলেনি!' : 'New passwords do not match!'
@@ -119,6 +130,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     setIsUpdatingPassword(true);
     try {
+      const fbEmailCheck = await FirebaseSyncService.verifyMainAdminResetEmailInFirebase(
+        passwordConfirmEmail,
+        currentUser
+      );
+      if (!fbEmailCheck.authorized) {
+        setPasswordError(fbEmailCheck.message);
+        return;
+      }
+
       const res = await StorageService.updateAdminPasswordWithFirebaseSync(
         currentPassword,
         newPassword,
@@ -132,6 +152,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             ? 'প্রধান অ্যাডমিনের পাসওয়ার্ড সফলভাবে পরিবর্তন ও ফায়ারবেসে হালনাগাদ করা হয়েছে!'
             : 'Admin password successfully updated and synced to Firebase!';
         setPasswordSuccess(msg);
+        setPasswordConfirmEmail('');
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
@@ -269,28 +290,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleConfirmFullReset = () => {
+  const handleConfirmFullReset = async () => {
     const trimmed = resetConfirmEmail.trim().toLowerCase();
-    const validEmails = [
-      'freelancerkajolchandradas@gmail.com',
-      (currentUser.email || '').trim().toLowerCase(),
-    ].filter(Boolean);
-
-    const isMatch = validEmails.some((email) => email === trimmed);
-
-    if (!isMatch) {
+    if (!trimmed) {
       setResetEmailError(
         language === 'bn'
-          ? 'ভুল জিমেইল ঠিকানা! রিসেট সম্পন্ন করতে অনুমোদিত অ্যাডমিন জিমেইল লিখুন।'
-          : 'Invalid Gmail address! Please enter authorized admin Gmail.'
+          ? 'নিশ্চিত করতে ফায়ারবেসে নিবন্ধিত অনুমোদিত জিমেইলটি নিজ হাতে লিখুন।'
+          : 'Please manually enter the authorized Gmail registered in Firebase.'
       );
       return;
     }
 
-    setShowResetConfirm(false);
-    setResetConfirmEmail('');
+    setIsVerifyingReset(true);
     setResetEmailError(null);
-    onResetDatabase();
+    try {
+      const fbCheck = await FirebaseSyncService.verifyMainAdminResetEmailInFirebase(
+        trimmed,
+        currentUser
+      );
+      if (!fbCheck.authorized) {
+        setResetEmailError(fbCheck.message);
+        return;
+      }
+
+      setShowResetConfirm(false);
+      setResetConfirmEmail('');
+      setResetEmailError(null);
+      onResetDatabase();
+    } catch (err: any) {
+      setResetEmailError(
+        err?.message ||
+          (language === 'bn'
+            ? 'ফায়ারবেসে জিমেইল যাচাই করতে সমস্যা হয়েছে।'
+            : 'Failed to verify registered Gmail in Firebase.')
+      );
+    } finally {
+      setIsVerifyingReset(false);
+    }
   };
 
   return (
@@ -329,8 +365,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
           {language === 'bn'
-            ? 'উন্মুক্ত নিবন্ধন বন্ধ। সাধারণ ব্যবহারকারীদের জন্য ড্যাশবোর্ডটি শুধু দেখার জন্য (View-Only)। শুধুমাত্র প্রধান অ্যাডমিনের ইমেইল (freelancerkajolchandradas@gmail.com) ও পাসওয়ার্ড দিয়ে লগইন করে পরিচালনা করা যাবে। প্রধান অ্যাডমিনের অন্যান্য অ্যাডমিন অপসারণের একক কর্তৃত্ব রয়েছে।'
-            : 'Open registration is disabled. Users have view-only access to the dashboard. Only the main admin can log in and has authority to delete other admins.'}
+            ? 'উন্মুক্ত নিবন্ধন বন্ধ। সাধারণ ব্যবহারকারীদের জন্য ড্যাশবোর্ডটি শুধু দেখার জন্য (View-Only)। পাসওয়ার্ড পরিবর্তন বা রিসেট শুধুমাত্র ফায়ারবেসে নিবন্ধিত নির্ধারিত অনুমোদিত জিমেইল যাচাইয়ের মাধ্যমেই সম্পন্ন হবে।'
+            : 'Open registration is disabled. Password updates and resets are strictly restricted to the exact authorized Gmail registered in Firebase.'}
         </p>
 
         {passwordError && (
@@ -347,7 +383,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleChangePassword} className="mt-4 space-y-3 max-w-lg">
+        <form onSubmit={handleChangePassword} className="mt-4 space-y-3 max-w-lg" autoComplete="off">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              {language === 'bn'
+                ? 'ফায়ারবেসে নিবন্ধিত অনুমোদিত জিমেইল লিখুন (Registered Gmail)'
+                : 'Enter Registered Authorized Gmail'} <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="email"
+              name="main-admin-verify-registered-email"
+              autoComplete="new-password"
+              required
+              value={passwordConfirmEmail}
+              onChange={(e) => {
+                setPasswordConfirmEmail(e.target.value);
+                setPasswordError(null);
+              }}
+              placeholder={language === 'bn' ? 'নিবন্ধিত অনুমোদিত জিমেইল লিখুন...' : 'Enter exact Gmail registered in Firebase...'}
+              className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+            />
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               {language === 'bn' ? 'বর্তমান পাসওয়ার্ড (Current Password)' : 'Current Password'}
@@ -796,7 +853,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             type="button"
             onClick={() => {
               setShowResetConfirm(true);
-              setResetConfirmEmail(currentUser.email || 'freelancerkajolchandradas@gmail.com');
+              setResetConfirmEmail('');
               setResetEmailError(null);
             }}
             className="px-4 py-2 rounded-xl text-xs font-bold bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/40 dark:hover:bg-red-900/50 dark:text-red-300 border border-red-200 dark:border-red-800 transition-all cursor-pointer self-start sm:self-auto shrink-0 shadow-2xs"
@@ -839,20 +896,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="relative">
                 <input
                   type="email"
+                  name="db-reset-confirm-email-manual"
+                  autoComplete="new-password"
+                  data-lpignore="true"
                   value={resetConfirmEmail}
                   onChange={(e) => {
                     setResetConfirmEmail(e.target.value);
                     setResetEmailError(null);
                   }}
-                  placeholder="pakurasanatan@gmail.com"
+                  placeholder={language === 'bn' ? 'নিবন্ধিত অনুমোদিত জিমেইল নিজ হাতে লিখুন...' : 'Manually type registered Gmail...'}
                   className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/20 font-mono"
                   autoFocus
                 />
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {language === 'bn'
-                  ? 'নিশ্চিতকরণ জিমেইল:pakurasanatan@gmail.com'
-                  : 'Authorized Admin Gmail:pakurasanatan@gmail.com'}
+                  ? 'নিরাপত্তার জন্য এই ক্ষেত্রটি স্বয়ংক্রিয়ভাবে পূরণ করা হয় না। ফায়ারবেসে নিবন্ধিত সঠিক অনুমোদিত জিমেইলটি নিজ হাতে লিখুন।'
+                  : 'For security, this field is never auto-populated. Manually enter the exact authorized Gmail registered in Firebase.'}
               </p>
 
               {resetEmailError && (
@@ -866,6 +926,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="flex items-center justify-end gap-2.5 mt-6 pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
+                disabled={isVerifyingReset}
                 onClick={() => {
                   setShowResetConfirm(false);
                   setResetConfirmEmail('');
@@ -878,14 +939,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmFullReset}
-                disabled={!resetConfirmEmail.trim()}
+                disabled={!resetConfirmEmail.trim() || isVerifyingReset}
                 className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 ${
-                  resetConfirmEmail.trim()
+                  resetConfirmEmail.trim() && !isVerifyingReset
                     ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/20 cursor-pointer'
                     : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
                 }`}
               >
-                <span>{t.confirmFullReset || (language === 'bn' ? 'সম্পূর্ণ রিসেট নিশ্চিত করুন' : 'Confirm Full Reset')}</span>
+                {isVerifyingReset && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>
+                  {isVerifyingReset
+                    ? (language === 'bn' ? 'ফায়ারবেসে যাচাই হচ্ছে...' : 'Verifying Firebase...')
+                    : (t.confirmFullReset || (language === 'bn' ? 'সম্পূর্ণ রিসেট নিশ্চিত করুন' : 'Confirm Full Reset'))}
+                </span>
               </button>
             </div>
           </div>

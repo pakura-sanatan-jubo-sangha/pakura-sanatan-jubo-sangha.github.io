@@ -1031,6 +1031,14 @@ export default function App() {
   };
 
   const handleResetDatabase = async () => {
+    if (!isStrictMainAdmin(currentUser)) {
+      showToast(
+        language === 'bn'
+          ? '⚠️ শুধুমাত্র প্রধান অ্যাডমিন ডাটাবেজ রিসেট করতে পারবেন!'
+          : '⚠️ Only the Main Admin can reset the database!'
+      );
+      return;
+    }
     const resetData = StorageService.resetToInitialDatabase();
     setAppData(resetData);
     showToast(
@@ -1573,15 +1581,31 @@ export default function App() {
             />
           )}
 
-          {/* 11. Google Sheets 14-Tab Cloud Synchronization View */}
+          {/* 11. Google Sheets 14-Tab Cloud Synchronization View (Main Admin Only) */}
           {!isViewOnly && currentTab === 'sheets' && (
-            <GoogleSheetsView
-              appData={appData}
-              currentUser={currentUser}
-              language={language}
-              onUpdateSpreadsheetId={handleUpdateSpreadsheetId}
-              onAddActivityLog={handleAddActivityLog}
-            />
+            isMainAdmin ? (
+              <GoogleSheetsView
+                appData={appData}
+                currentUser={currentUser}
+                language={language}
+                onUpdateSpreadsheetId={handleUpdateSpreadsheetId}
+                onAddActivityLog={handleAddActivityLog}
+              />
+            ) : (
+              <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center max-w-md mx-auto my-8 shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-950 text-amber-600 flex items-center justify-center mx-auto mb-3">
+                  <Lock className="w-6 h-6" />
+                </div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  {language === 'bn' ? 'প্রধান অ্যাডমিনের জন্য সংরক্ষিত' : 'Main Admin Only'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  {language === 'bn'
+                    ? 'গুগল শিট সিঙ্ক সুবিধা শুধুমাত্র প্রধান অ্যাডমিনের জন্য সংরক্ষিত।'
+                    : 'Google Sheets synchronization is strictly restricted to the Main Admin.'}
+                </p>
+              </div>
+            )
           )}
 
           {/* 12. Admin Withdrawals & Profit Dividend Management */}
@@ -1693,7 +1717,7 @@ export default function App() {
 
           {/* 15. Super Admin Only: System Settings & Admin Password Management */}
           {currentTab === 'settings' && (
-            isAdmin ? (
+            isMainAdmin ? (
               <SettingsView
                 settings={appData.settings}
                 currentUser={currentUser}
@@ -1714,8 +1738,8 @@ export default function App() {
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   {language === 'bn'
-                    ? 'ড্যাশবোর্ডটি ভিউ-অনলি মোডে রয়েছে। সেটিংস পরিবর্তনের জন্য হেডার থেকে প্রধান অ্যাডমিন হিসেবে লগইন করুন।'
-                    : 'The dashboard is in View-Only mode. Please use Admin Login in the header to manage settings.'}
+                    ? 'সিস্টেম সেটিংস এবং ডাটাবেজ রিসেট শুধুমাত্র প্রধান অ্যাডমিনের জন্য সংরক্ষিত।'
+                    : 'System settings and database reset are strictly restricted to the Main Admin.'}
                 </p>
               </div>
             )
