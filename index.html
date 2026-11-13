@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="google-site-verification" content="nzvqDT2WOuNKbPeGQXa625XzIUecl54WEqrqWeaLO1k">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>পাকুড়া সনাতন যুব সংঘ - Finance & Management</title>
     <meta name="description" content="পাকুড়া সনাতন যুব সংঘের আর্থিক হিসাব, মাসিক সঞ্চয়, ঋণ, সদস্য ও লেজার ব্যবস্থাপনা সিস্টেম।" />
@@ -23,7 +24,9 @@
           msg.indexOf('popup-blocked') !== -1 ||
           msg.indexOf('popup-closed-by-user') !== -1 ||
           (msg.indexOf("Cannot read properties of null (reading 'style')") !== -1 && (filename.indexOf('recaptcha') !== -1 || filename.indexOf('gstatic') !== -1 || !filename)) ||
-          msg.indexOf('recaptcha') !== -1
+          msg.indexOf('recaptcha') !== -1 ||
+          msg.indexOf('WebSocket closed without opened') !== -1 ||
+          msg.indexOf('failed to connect to websocket') !== -1
         ) {
           event.preventDefault();
           if (event.stopImmediatePropagation) event.stopImmediatePropagation();
@@ -48,6 +51,8 @@
           'style',
           'recaptcha',
           'Firestore Error',
+          'WebSocket closed without opened',
+          'failed to connect to websocket',
           '[Handled'
         ];
         var isBenign = benignTokens.some(function(t) { return reason.indexOf(t) !== -1; });
