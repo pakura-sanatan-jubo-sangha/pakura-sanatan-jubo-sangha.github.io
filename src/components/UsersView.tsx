@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserAccount, UserRole, Language } from '../types';
 import { getTranslation } from '../lib/translations';
+import { isStrictMainAdmin, MAIN_ADMIN_EMAIL } from '../lib/storage';
 import {
   ShieldAlert,
   UserPlus,
@@ -47,14 +48,11 @@ export const UsersView: React.FC<UsersViewProps> = ({
   // Deletion Confirmation State
   const [userToDelete, setUserToDelete] = useState<UserAccount | null>(null);
 
-  const isMainAdmin =
-    currentUser.role === 'admin' &&
-    (currentUser.isMainAdmin === true ||
-      currentUser.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' ||
-      currentUser.userId === 'USR-000001');
+  const isMainAdmin = isStrictMainAdmin(currentUser);
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMainAdmin) return;
     if (!newEmail.trim() || !newName.trim()) return;
     onAddUser(
       newEmail.trim().toLowerCase(),
@@ -70,12 +68,14 @@ export const UsersView: React.FC<UsersViewProps> = ({
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMainAdmin) return;
     if (!editingUser) return;
     onUpdateRole(editingUser.userId, editRole, editStatus);
     setEditingUser(null);
   };
 
   const handleConfirmDelete = () => {
+    if (!isMainAdmin) return;
     if (!userToDelete) return;
     onDeleteUser(userToDelete.userId);
     setUserToDelete(null);
@@ -83,9 +83,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
 
   const isTargetMainAdmin = (u: UserAccount) => {
     return (
-      u.isMainAdmin === true ||
-      u.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' ||
-      u.userId === 'USR-000001' ||
+      isStrictMainAdmin(u) ||
+      u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
       u.userId === 'USR-MAIN-ADMIN'
     );
   };
@@ -237,32 +236,33 @@ export const UsersView: React.FC<UsersViewProps> = ({
                       </td>
                       <td className="p-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Edit Role/Status Button */}
-                          <button
-                            onClick={() => {
-                              setEditingUser(u);
-                              setEditRole(u.role);
-                              setEditStatus(u.status);
-                            }}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
-                            title={language === 'bn' ? 'সম্পাদনা করুন' : 'Edit User'}
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-
-                          {/* Main Admin Authority to Delete Other Admins/Users */}
+                          {/* Main Admin Only: Edit Role/Status & Delete */}
                           {isMainAdmin && (
-                            <button
-                              onClick={() => setUserToDelete(u)}
-                              className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 transition-all cursor-pointer"
-                              title={
-                                isTargetAdmin
-                                  ? language === 'bn' ? 'অ্যাডমিন অপসারণ (প্রধান অ্যাডমিনের অধিকার)' : 'Delete Admin (Main Admin Authority)'
-                                  : language === 'bn' ? 'ব্যবহারকারী অপসারণ' : 'Delete User'
-                              }
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingUser(u);
+                                  setEditRole(u.role);
+                                  setEditStatus(u.status);
+                                }}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                title={language === 'bn' ? 'সম্পাদনা করুন' : 'Edit User'}
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                onClick={() => setUserToDelete(u)}
+                                className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 transition-all cursor-pointer"
+                                title={
+                                  isTargetAdmin
+                                    ? language === 'bn' ? 'অ্যাডমিন অপসারণ (প্রধান অ্যাডমিনের অধিকার)' : 'Delete Admin (Main Admin Authority)'
+                                    : language === 'bn' ? 'ব্যবহারকারী অপসারণ' : 'Delete User'
+                                }
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -275,8 +275,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
         )}
       </div>
 
-      {/* Modal: Confirm Deletion of Admin/User */}
-      {userToDelete && (
+      {/* Modal: Confirm Deletion of Admin/User (Main Admin Only) */}
+      {userToDelete && isMainAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800 text-red-600">
@@ -341,8 +341,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
         </div>
       )}
 
-      {/* Modal: Add User */}
-      {showAddModal && (
+      {/* Modal: Add User (Main Admin Only) */}
+      {showAddModal && isMainAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -442,8 +442,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
         </div>
       )}
 
-      {/* Modal: Edit User */}
-      {editingUser && (
+      {/* Modal: Edit User (Main Admin Only) */}
+      {editingUser && isMainAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
             <h3 className="font-bold text-base text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">

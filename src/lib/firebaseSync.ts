@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDocsFromServer,
   getDoc,
   setDoc,
   deleteDoc,
@@ -17,7 +18,25 @@ import {
   RecaptchaVerifier,
   ConfirmationResult,
 } from 'firebase/auth';
-import { db, auth, handleFirestoreError, OperationType } from './firebase';
+import {
+  db,
+  auth,
+  handleFirestoreError,
+  OperationType,
+  provisionSecondaryAuthUser,
+  firebaseUpdateUserPassword,
+} from './firebase';
+
+const MAIN_ADMIN_EMAIL_CONST = 'freelancerkajolchandradas@gmail.com';
+
+function isStrictMainAdminAccount(user?: UserAccount | null): boolean {
+  if (!user || user.role !== 'admin' || user.isMainAdmin === false) return false;
+  const email = (user.email || '').toLowerCase().trim();
+  return (
+    email === MAIN_ADMIN_EMAIL_CONST.toLowerCase() ||
+    (user.userId === 'USR-MAIN-ADMIN' && user.isMainAdmin === true)
+  );
+}
 import {
   FullAppData,
   AppSettings,
@@ -76,6 +95,68 @@ export function formatPhoneToE164(phone: string): string {
   return `+880${digits}`;
 }
 
+export function phonesMatchForVerification(a?: string, b?: string): boolean {
+  const nA = normalizePhoneForAuth(a);
+  const nB = normalizePhoneForAuth(b);
+  if (!nA || !nB) return false;
+  if (nA === nB) return true;
+  if (nA.length >= 10 && nB.length >= 10 && nA.slice(-10) === nB.slice(-10)) {
+    return true;
+  }
+  return false;
+}
+
+function extractNormalizedDigits(text?: string): string {
+  if (!text) return '';
+  const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  let s = String(text);
+  for (let i = 0; i < 10; i++) {
+    s = s.replaceAll(bengaliDigits[i], String(i));
+  }
+  return s.replace(/\D/g, '');
+}
+
+function isPlaceholderMemberSkeletonUser(
+  u: any,
+  docId: string,
+  linkedMemberUserIds: Set<string>
+): boolean {
+  const pwd = typeof u?.password === 'string' ? u.password.trim() : '';
+  const email = typeof u?.email === 'string' ? u.email.trim() : '';
+  const uid = typeof u?.firebaseUid === 'string' ? u.firebaseUid.trim() : '';
+  const userId = typeof u?.userId === 'string' ? u.userId.trim() : docId;
+  const isFlaggedRegistered = Boolean(u?.isRegistered || u?.registeredAt);
+
+  if (pwd.length > 0 || email.length > 0 || isFlaggedRegistered) {
+    return false;
+  }
+  if (linkedMemberUserIds.has(userId) || linkedMemberUserIds.has(docId)) {
+    return false;
+  }
+  // Empty pre-seeded skeleton docs always use USR-M-SYS-* without password or real Firebase UID
+  const isSkeletonId =
+    userId.startsWith('USR-M-SYS-') && (!uid || uid.startsWith('USR-M-SYS-'));
+  return isSkeletonId;
+}
+
+export interface FirebaseRegistrationVerificationResult {
+  checked: boolean;
+  connectionError?: string;
+  memberFound: boolean;
+  matchedMembers: Member[];
+  primaryMember?: Member;
+  alreadyRegistered: boolean;
+  reasons: string[];
+  existingAccountDetails?: {
+    source: 'users' | 'members' | 'activity_logs' | 'registration_history' | 'firebase_auth';
+    userId?: string;
+    firebaseUid?: string;
+    memberSystemId?: string;
+    memberName?: string;
+    registeredAt?: string;
+  };
+}
+
 /**
  * Firebase Firestore Cloud Synchronization Service
  * Provides secure, verified bidirectional syncing with Firestore and Firebase Auth
@@ -89,6 +170,7 @@ export class FirebaseSyncService {
     const path = `users/${user.userId}`;
     try {
       const userRef = doc(db, 'users', user.userId);
+      const isMain = isStrictMainAdminAccount(user);
       await setDoc(
         userRef,
         {
@@ -102,8 +184,8 @@ export class FirebaseSyncService {
           email: user.email || '',
           phone: user.phone || '',
           memberSystemId: user.memberSystemId || '',
-          isMainAdmin: Boolean(user.isMainAdmin),
-          password: user.password || '', // Stored for member self-service reference
+          isMainAdmin: isMain,
+          password: user.password || '',
           lastSyncedAt: new Date().toISOString(),
           createdAt: user.createdAt || new Date().toISOString().split('T')[0],
         },
@@ -115,14 +197,450 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Delete user profile from Firestore
+   * Delete user profile (and admin registry entry) from Firestore.
+   * Refuses to delete the Main Super Admin.
    */
   static async deleteUserProfile(userId: string): Promise<void> {
-    const path = `users/${userId}`;
+    if (!userId || userId === 'USR-MAIN-ADMIN') return;
     try {
       await deleteDoc(doc(db, 'users', userId));
     } catch (error) {
       console.warn('Failed to delete user profile from Firestore:', error);
+    }
+    try {
+      await deleteDoc(doc(db, 'admins', userId));
+    } catch (error) {
+      console.warn('Failed to delete admin record from Firestore:', error);
+    }
+  }
+
+  /**
+   * Add a new admin/committee user to Firebase (/users, /admins, Auth if possible, and permanent /activity_logs).
+   * Strictly restricted to the Main Admin only.
+   */
+  static async addAdminInFirebase(params: {
+    user: UserAccount;
+    password: string;
+    createdBy?: UserAccount | null;
+  }): Promise<{ success: boolean; message: string; firebaseUid?: string }> {
+    const { user, password, createdBy } = params;
+    if (!isStrictMainAdminAccount(createdBy)) {
+      return {
+        success: false,
+        message: 'শুধুমাত্র প্রধান অ্যাডমিন নতুন অ্যাডমিন যোগ করতে পারবেন। (Only the Main Admin can add admins.)',
+      };
+    }
+
+    const cleanEmail = (user.email || '').trim().toLowerCase();
+    const cleanPass = (password || user.password || '').trim();
+    const nowIso = new Date().toISOString();
+
+    let resolvedFirebaseUid = user.firebaseUid || '';
+    if (cleanEmail && cleanPass.length >= 6) {
+      const authRes = await provisionSecondaryAuthUser(
+        cleanEmail,
+        cleanPass,
+        user.name || user.displayName
+      );
+      if (authRes.uid) {
+        resolvedFirebaseUid = authRes.uid;
+      }
+    }
+
+    const effectiveUid = resolvedFirebaseUid || user.userId;
+
+    try {
+      // 1. Save full user profile in /users/{userId}
+      await setDoc(
+        doc(db, 'users', user.userId),
+        {
+          userId: user.userId,
+          firebaseUid: effectiveUid,
+          displayName: user.displayName || user.name || cleanEmail,
+          name: user.name || user.displayName || cleanEmail,
+          username: user.username || cleanEmail.split('@')[0],
+          role: user.role,
+          status: user.status || 'active',
+          email: cleanEmail,
+          phone: user.phone || '',
+          memberSystemId: user.memberSystemId || '',
+          isMainAdmin: false,
+          password: cleanPass,
+          addedBy: createdBy?.email || MAIN_ADMIN_EMAIL_CONST,
+          addedByUserId: createdBy?.userId || 'USR-MAIN-ADMIN',
+          createdAt: user.createdAt || nowIso.split('T')[0],
+          updatedAt: nowIso,
+          passwordUpdatedAt: nowIso,
+          lastSyncedAt: nowIso,
+        },
+        { merge: true }
+      );
+
+      // 2. Keep permanent admin record in /admins/{userId} for elevated governance roles
+      const isPrivilegedRole = ['admin', 'president', 'treasurer', 'secretary'].includes(user.role);
+      if (isPrivilegedRole) {
+        await setDoc(
+          doc(db, 'admins', user.userId),
+          {
+            uid: effectiveUid,
+            userId: user.userId,
+            email: cleanEmail,
+            name: user.name || user.displayName,
+            displayName: user.displayName || user.name,
+            role: user.role,
+            status: user.status || 'active',
+            isMainAdmin: false,
+            password: cleanPass,
+            addedBy: createdBy?.email || MAIN_ADMIN_EMAIL_CONST,
+            addedByUserId: createdBy?.userId || 'USR-MAIN-ADMIN',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            passwordUpdatedAt: nowIso,
+          },
+          { merge: true }
+        );
+      } else {
+        await deleteDoc(doc(db, 'admins', user.userId)).catch(() => {});
+      }
+
+      // 3. Keep permanent audit record in /activity_logs
+      await this.syncActivityLog({
+        logId: `LOG-ADM-${Date.now()}`,
+        dateTime: new Date().toLocaleString('bn-BD'),
+        timestamp: nowIso,
+        userId: createdBy?.userId || 'USR-MAIN-ADMIN',
+        userDisplayName: createdBy?.displayName || 'Kajol Chandra Das ( Admin )',
+        role: 'admin',
+        action: user.role === 'admin' ? 'ADD_ADMIN' : 'CREATE_USER',
+        module: 'User Management',
+        referenceId: user.userId,
+        description: `প্রধান অ্যাডমিন (${createdBy?.email || MAIN_ADMIN_EMAIL_CONST}) ফায়ারবেস রেকর্ডে ${
+          user.role === 'admin' ? 'সহকারী অ্যাডমিন' : user.role
+        } যুক্ত করেছেন: ${user.name || user.displayName} (${cleanEmail})`,
+      });
+
+      return {
+        success: true,
+        message: 'ফায়ারবেস ক্লাউডে অ্যাডমিন ও রেকর্ড সফলভাবে সংরক্ষিত হয়েছে।',
+        firebaseUid: resolvedFirebaseUid || undefined,
+      };
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `admins/${user.userId}`);
+      return {
+        success: false,
+        message: error?.message || 'ফায়ারবেসে অ্যাডমিন সংরক্ষণ করতে সমস্যা হয়েছে।',
+      };
+    }
+  }
+
+  /**
+   * Sync admin role/status edits to /users and /admins in Firebase.
+   * Strictly restricted to the Main Admin only.
+   */
+  static async syncAdminRoleUpdateInFirebase(params: {
+    user: UserAccount;
+    updatedBy?: UserAccount | null;
+  }): Promise<{ success: boolean; message: string }> {
+    const { user, updatedBy } = params;
+    if (!isStrictMainAdminAccount(updatedBy)) {
+      return {
+        success: false,
+        message: 'শুধুমাত্র প্রধান অ্যাডমিন রোল বা স্ট্যাটাস পরিবর্তন করতে পারবেন।',
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    try {
+      await this.syncUserProfile(user);
+
+      const isPrivilegedRole = ['admin', 'president', 'treasurer', 'secretary'].includes(user.role);
+      if (isPrivilegedRole) {
+        await setDoc(
+          doc(db, 'admins', user.userId),
+          {
+            uid: user.firebaseUid || user.userId,
+            userId: user.userId,
+            email: (user.email || '').toLowerCase().trim(),
+            name: user.name || user.displayName,
+            displayName: user.displayName || user.name,
+            role: user.role,
+            status: user.status || 'active',
+            isMainAdmin: false,
+            password: user.password || '',
+            updatedBy: updatedBy?.email || MAIN_ADMIN_EMAIL_CONST,
+            updatedAt: nowIso,
+            createdAt: user.createdAt || nowIso,
+          },
+          { merge: true }
+        );
+      } else {
+        await deleteDoc(doc(db, 'admins', user.userId)).catch(() => {});
+      }
+
+      return { success: true, message: 'ফায়ারবেসে রোল ও স্ট্যাটাস হালনাগাদ হয়েছে।' };
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `admins/${user.userId}`);
+      return { success: false, message: error?.message || 'ফায়ারবেস আপডেট ব্যর্থ হয়েছে।' };
+    }
+  }
+
+  /**
+   * Update an admin's password in Firebase (Firestore /users, /admins, /settings if Main Admin, Firebase Auth, and /activity_logs).
+   */
+  static async updateAdminPasswordInFirebase(params: {
+    user: UserAccount;
+    newPassword: string;
+    isMainAdmin: boolean;
+    settings?: AppSettings;
+  }): Promise<{ success: boolean; message: string }> {
+    const { user, newPassword, isMainAdmin, settings } = params;
+    const cleanPass = (newPassword || '').trim();
+    const nowIso = new Date().toISOString();
+    const cleanEmail = (user.email || (isMainAdmin ? MAIN_ADMIN_EMAIL_CONST : '')).toLowerCase().trim();
+    const targetUserId = isMainAdmin ? 'USR-MAIN-ADMIN' : user.userId;
+
+    try {
+      // 1. Update /users/{userId}
+      await setDoc(
+        doc(db, 'users', targetUserId),
+        {
+          userId: targetUserId,
+          firebaseUid: user.firebaseUid || targetUserId,
+          displayName: user.displayName || user.name || (isMainAdmin ? 'Kajol Chandra Das ( Admin )' : cleanEmail),
+          name: user.name || user.displayName || (isMainAdmin ? 'Kajol Chandra Das' : cleanEmail),
+          username: user.username || (isMainAdmin ? 'kajol_admin' : cleanEmail.split('@')[0]),
+          role: user.role || 'admin',
+          status: user.status || 'active',
+          email: cleanEmail,
+          phone: user.phone || '',
+          memberSystemId: user.memberSystemId || '',
+          isMainAdmin: Boolean(isMainAdmin),
+          password: cleanPass,
+          passwordUpdatedAt: nowIso,
+          updatedAt: nowIso,
+          lastSyncedAt: nowIso,
+          createdAt: user.createdAt || nowIso.split('T')[0],
+        },
+        { merge: true }
+      );
+
+      // 2. Update /admins/{userId} (and any matching /admins docs by email)
+      const isPrivilegedRole =
+        isMainAdmin || ['admin', 'president', 'treasurer', 'secretary'].includes(user.role);
+      if (isPrivilegedRole) {
+        await setDoc(
+          doc(db, 'admins', targetUserId),
+          {
+            uid: user.firebaseUid || targetUserId,
+            userId: targetUserId,
+            email: cleanEmail,
+            name: user.name || user.displayName || (isMainAdmin ? 'Kajol Chandra Das' : cleanEmail),
+            displayName: user.displayName || user.name || cleanEmail,
+            role: user.role || 'admin',
+            status: user.status || 'active',
+            isMainAdmin: Boolean(isMainAdmin),
+            password: cleanPass,
+            passwordUpdatedAt: nowIso,
+            updatedAt: nowIso,
+            createdAt: user.createdAt || nowIso,
+          },
+          { merge: true }
+        );
+
+        if (cleanEmail) {
+          try {
+            const adminsSnap = await getDocsFromServer(collection(db, 'admins')).catch(() =>
+              getDocs(collection(db, 'admins'))
+            );
+            for (const aDoc of adminsSnap.docs) {
+              const data = aDoc.data() as any;
+              if (
+                aDoc.id !== targetUserId &&
+                (data?.email || '').toLowerCase().trim() === cleanEmail
+              ) {
+                await setDoc(
+                  doc(db, 'admins', aDoc.id),
+                  {
+                    password: cleanPass,
+                    passwordUpdatedAt: nowIso,
+                    updatedAt: nowIso,
+                  },
+                  { merge: true }
+                );
+              }
+            }
+          } catch (err) {
+            console.warn('Matching admins password sync notice:', err);
+          }
+        }
+      }
+
+      // 3. If Main Admin, update /settings/app_settings
+      if (isMainAdmin && settings) {
+        await this.syncSettings({ ...settings, adminPassword: cleanPass });
+      }
+
+      // 4. Update Firebase Auth password if currently authenticated as this email
+      await firebaseUpdateUserPassword(cleanPass, cleanEmail || undefined);
+
+      // 5. Record password change audit log in Firestore /activity_logs
+      await this.syncActivityLog({
+        logId: `LOG-PWD-${Date.now()}`,
+        dateTime: new Date().toLocaleString('bn-BD'),
+        timestamp: nowIso,
+        userId: targetUserId,
+        userDisplayName: user.displayName || user.name || cleanEmail,
+        role: user.role || 'admin',
+        action: isMainAdmin ? 'CHANGE_ADMIN_PASSWORD' : 'CHANGE_PASSWORD',
+        module: 'Security',
+        referenceId: targetUserId,
+        description: `${
+          isMainAdmin ? 'প্রধান অ্যাডমিনের' : 'অ্যাডমিন/ব্যবহারকারীর'
+        } পাসওয়ার্ড ফায়ারবেসে সফলভাবে হালনাগাদ করা হয়েছে (${cleanEmail || targetUserId})`,
+      });
+
+      return {
+        success: true,
+        message: 'পাসওয়ার্ড ফায়ারবেস ক্লাউডে সফলভাবে হালনাগাদ হয়েছে।',
+      };
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `admins/${targetUserId}`);
+      return {
+        success: false,
+        message: error?.message || 'ফায়ারবেসে পাসওয়ার্ড হালনাগাদ করতে সমস্যা হয়েছে।',
+      };
+    }
+  }
+
+  /**
+   * Fetch an admin or user account directly from Firestore by email (and Main Admin settings if applicable).
+   * Enables cross-device login immediately after an admin is added or changes their password.
+   */
+  static async fetchUserOrAdminByEmailFromFirestore(
+    email: string
+  ): Promise<{ user: UserAccount | null; settings?: AppSettings }> {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (!cleanEmail) return { user: null };
+
+    try {
+      if (cleanEmail === MAIN_ADMIN_EMAIL_CONST.toLowerCase()) {
+        let loadedSettings: AppSettings | undefined;
+        try {
+          const settingsSnap = await getDoc(doc(db, 'settings', 'app_settings'));
+          if (settingsSnap.exists()) {
+            loadedSettings = settingsSnap.data() as AppSettings;
+          }
+        } catch {}
+
+        let mainUser: UserAccount | null = null;
+        try {
+          const mainDoc = await getDoc(doc(db, 'users', 'USR-MAIN-ADMIN'));
+          if (mainDoc.exists()) {
+            mainUser = mainDoc.data() as UserAccount;
+          }
+        } catch {}
+
+        return { user: mainUser, settings: loadedSettings };
+      }
+
+      const [usersSnap, adminsSnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'users')).catch(() => getDocs(collection(db, 'users'))),
+        getDocsFromServer(collection(db, 'admins')).catch(() => getDocs(collection(db, 'admins'))),
+      ]);
+
+      let matched: UserAccount | null = null;
+
+      usersSnap.forEach((d) => {
+        const u = d.data() as any;
+        if ((u?.email || '').toLowerCase().trim() === cleanEmail) {
+          matched = {
+            userId: u.userId || d.id,
+            firebaseUid: u.firebaseUid || u.userId || d.id,
+            username: u.username || cleanEmail.split('@')[0],
+            phone: u.phone || '',
+            email: cleanEmail,
+            name: u.name || u.displayName || cleanEmail,
+            displayName: u.displayName || u.name || cleanEmail,
+            role: u.role || 'member',
+            memberSystemId: u.memberSystemId || '',
+            status: u.status || 'active',
+            password: u.password || '',
+            createdAt: u.createdAt || new Date().toISOString().split('T')[0],
+            isMainAdmin: false,
+          };
+        }
+      });
+
+      adminsSnap.forEach((d) => {
+        const a = d.data() as any;
+        if ((a?.email || '').toLowerCase().trim() === cleanEmail) {
+          const adminUserId = a.userId || d.id;
+          // Prefer latest password if present in /admins
+          if (!matched) {
+            matched = {
+              userId: adminUserId,
+              firebaseUid: a.uid || adminUserId,
+              username: cleanEmail.split('@')[0],
+              email: cleanEmail,
+              name: a.name || a.displayName || cleanEmail,
+              displayName: a.displayName || a.name || cleanEmail,
+              role: a.role || 'admin',
+              status: a.status || 'active',
+              password: a.password || '',
+              createdAt: a.createdAt ? String(a.createdAt).split('T')[0] : new Date().toISOString().split('T')[0],
+              isMainAdmin: false,
+            };
+          } else if (a.password) {
+            matched.password = a.password;
+            if (a.role) matched.role = a.role;
+            if (a.status) matched.status = a.status;
+          }
+        }
+      });
+
+      return { user: matched };
+    } catch (error) {
+      console.warn('Firestore user/admin lookup notice:', error);
+      return { user: null };
+    }
+  }
+
+  /**
+   * Clear all documents from Firestore /activity_logs.
+   * Strictly restricted to the Main Admin only.
+   */
+  static async clearAllActivityLogsInFirebase(
+    executingUser?: UserAccount | null
+  ): Promise<{ success: boolean; deletedCount: number; message: string }> {
+    if (!isStrictMainAdminAccount(executingUser)) {
+      return {
+        success: false,
+        deletedCount: 0,
+        message: 'শুধুমাত্র প্রধান অ্যাডমিনের অডিট লগ মুছে ফেলার অনুমতি রয়েছে।',
+      };
+    }
+
+    try {
+      const snap = await getDocsFromServer(collection(db, 'activity_logs')).catch(() =>
+        getDocs(collection(db, 'activity_logs'))
+      );
+      let deletedCount = 0;
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, 'activity_logs', d.id));
+        deletedCount++;
+      }
+      return {
+        success: true,
+        deletedCount,
+        message: 'ফায়ারবেস ও ওয়েবসাইটের সকল অডিট অ্যাক্টিভিটি লগ মুছে ফেলা হয়েছে।',
+      };
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.DELETE, 'activity_logs');
+      return {
+        success: false,
+        deletedCount: 0,
+        message: error?.message || 'ফায়ারবেস থেকে অডিট লগ মুছতে সমস্যা হয়েছে।',
+      };
     }
   }
 
@@ -160,72 +678,443 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Register a new member account in Firebase Auth and Firestore
+   * Rigorously verify via Firebase server whether a user/phone has registered previously,
+   * covering the entire history across members, users, registration_history, and activity_logs.
+   */
+  static async verifyRegistrationHistoryInFirebase(
+    phone: string
+  ): Promise<FirebaseRegistrationVerificationResult> {
+    const cleanPhone = normalizePhoneForAuth(phone);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return {
+        checked: true,
+        memberFound: false,
+        matchedMembers: [],
+        alreadyRegistered: false,
+        reasons: ['অনুগ্রহ করে সঠিক মোবাইল নম্বর লিখুন (কমপক্ষে ১০-১১ ডিজিট)।'],
+      };
+    }
+
+    const last10 = cleanPhone.slice(-10);
+    const authEmail = phoneToMemberAuthEmail(cleanPhone).toLowerCase();
+
+    try {
+      const [membersSnap, usersSnap, historySnap, logsSnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'members')),
+        getDocsFromServer(collection(db, 'users')),
+        getDocsFromServer(collection(db, 'registration_history')).catch(() => null),
+        getDocsFromServer(collection(db, 'activity_logs')).catch(() => null),
+      ]);
+
+      // 1. Find ALL members matching this phone number in Firebase
+      const matchedMembers: Member[] = [];
+      membersSnap.forEach((docSnap) => {
+        const m = docSnap.data() as Member;
+        if (!m) return;
+        const sysId = (m.systemId || docSnap.id || '').trim();
+        if (!sysId) return;
+        if (phonesMatchForVerification(m.phone, cleanPhone)) {
+          matchedMembers.push({
+            ...m,
+            systemId: sysId,
+          });
+        }
+      });
+
+      if (matchedMembers.length === 0) {
+        return {
+          checked: true,
+          memberFound: false,
+          matchedMembers: [],
+          alreadyRegistered: false,
+          reasons: [
+            'এই মোবাইল নম্বরটি ফায়ারবেস সদস্য তালিকায় পাওয়া যায়নি। অ্যাকাউন্ট খুলতে আপনার নম্বরটি সদস্য তালিকায় নিবন্ধিত থাকতে হবে।',
+          ],
+        };
+      }
+
+      // Prefer primary member (already linked or lowest SYS ID)
+      matchedMembers.sort((a, b) => a.systemId.localeCompare(b.systemId));
+      const primaryMember =
+        matchedMembers.find((m) => (m.userId || '').trim().length > 0) || matchedMembers[0];
+
+      const matchedMemberIds = new Set(
+        matchedMembers.map((m) => m.systemId.toUpperCase())
+      );
+      const matchedMemberUserIds = new Set(
+        matchedMembers.map((m) => (m.userId || '').trim()).filter(Boolean)
+      );
+
+      const reasons: string[] = [];
+      let existingAccountDetails: FirebaseRegistrationVerificationResult['existingAccountDetails'];
+
+      // 2. Check /members collection for any linked userId or registration flag
+      for (const m of matchedMembers as any[]) {
+        const linkedUid = (m.userId || m.firebaseUid || '').trim();
+        if (linkedUid || m.isRegistered === true || m.registeredAt) {
+          reasons.push(
+            `সদস্য রেকর্ড (${m.name} • #${m.systemId}) ফায়ারবেসে ইতিমধ্যে একটি অ্যাকাউন্টের সাথে যুক্ত রয়েছে।`
+          );
+          if (!existingAccountDetails) {
+            existingAccountDetails = {
+              source: 'members',
+              userId: linkedUid || undefined,
+              memberSystemId: m.systemId,
+              memberName: m.name,
+              registeredAt: m.registeredAt || m.updatedAt || m.createdAt,
+            };
+          }
+        }
+      }
+
+      // 3. Check /registration_history collection (immutable permanent registration trail)
+      if (historySnap) {
+        historySnap.forEach((hDoc) => {
+          const h = hDoc.data() as any;
+          if (!h) return;
+          const hSysId = String(h.memberSystemId || '').toUpperCase();
+          const hSysIds: string[] = Array.isArray(h.memberSystemIds)
+            ? h.memberSystemIds.map((x: any) => String(x).toUpperCase())
+            : [];
+          const matchesPhone =
+            phonesMatchForVerification(h.phone, cleanPhone) ||
+            (h.phoneLast10 && h.phoneLast10 === last10) ||
+            (h.authEmail && String(h.authEmail).toLowerCase() === authEmail);
+          const matchesMember =
+            (hSysId && matchedMemberIds.has(hSysId)) ||
+            hSysIds.some((id) => matchedMemberIds.has(id));
+
+          if (matchesPhone || matchesMember) {
+            reasons.push(
+              `ফায়ারবেস স্থায়ী নিবন্ধন ইতিহাসে (Registration History) এই ব্যবহারকারীর পূর্বে নিবন্ধনের প্রমাণ রয়েছে (${h.registeredAt ? String(h.registeredAt).split('T')[0] : 'ইতিহাস সংরক্ষিত'})।`
+            );
+            if (!existingAccountDetails) {
+              existingAccountDetails = {
+                source: 'registration_history',
+                userId: h.userId,
+                firebaseUid: h.firebaseUid,
+                memberSystemId: h.memberSystemId || primaryMember.systemId,
+                memberName: h.memberName || primaryMember.name,
+                registeredAt: h.registeredAt,
+              };
+            }
+          }
+        });
+      }
+
+      // 4. Check /users collection thoroughly (normalized phone, username, authEmail, memberSystemId, linked userId)
+      usersSnap.forEach((uDoc) => {
+        const u = uDoc.data() as any;
+        if (!u) return;
+        const uId = String(u.userId || uDoc.id || '').trim();
+        const uSysId = String(u.memberSystemId || '').toUpperCase();
+        const uEmail = String(u.email || '').toLowerCase().trim();
+
+        const matchesPhone =
+          phonesMatchForVerification(u.phone, cleanPhone) ||
+          phonesMatchForVerification(u.username, cleanPhone) ||
+          (uEmail && uEmail === authEmail);
+        const matchesMember =
+          (uSysId && matchedMemberIds.has(uSysId)) ||
+          (uId && matchedMemberUserIds.has(uId)) ||
+          matchedMemberUserIds.has(uDoc.id);
+
+        if ((matchesPhone || matchesMember) && !isPlaceholderMemberSkeletonUser(u, uDoc.id, matchedMemberUserIds)) {
+          reasons.push(
+            `ফায়ারবেস ইউজার ডাটাবেসে এই মোবাইল নম্বর/সদস্যের নামে সক্রিয় অ্যাকাউন্ট পাওয়া গেছে (${u.createdAt || 'নিবন্ধিত'})।`
+          );
+          if (!existingAccountDetails) {
+            existingAccountDetails = {
+              source: 'users',
+              userId: uId,
+              firebaseUid: u.firebaseUid,
+              memberSystemId: u.memberSystemId || primaryMember.systemId,
+              memberName: u.name || u.displayName || primaryMember.name,
+              registeredAt: u.registeredAt || u.createdAt,
+            };
+          }
+        }
+      });
+
+      // 5. Check entire /activity_logs collection for any historical registration, login, or password event
+      if (logsSnap) {
+        logsSnap.forEach((lDoc) => {
+          const l = lDoc.data() as any;
+          if (!l) return;
+          const action = String(l.action || '').toUpperCase();
+          const desc = String(l.description || l.details || '');
+          const descDigits = extractNormalizedDigits(desc);
+          const refId = String(l.referenceId || l.memberSystemId || '').toUpperCase();
+          const logUserId = String(l.userId || '').trim();
+
+          const isAccountEvent =
+            action.includes('REGISTER') ||
+            action.includes('SIGNUP') ||
+            action.includes('USER_LOGIN') ||
+            action.includes('MEMBER_CAPTCHA_LOGIN') ||
+            action.includes('CHANGE_PASSWORD') ||
+            action.includes('RESET_PASSWORD') ||
+            action.includes('CREATE_USER') ||
+            desc.includes('নিবন্ধন') ||
+            desc.includes('অ্যাকাউন্ট তৈরি') ||
+            desc.includes('লগইন করেছেন') ||
+            desc.includes('পাসওয়ার্ড পরিবর্তন');
+
+          if (!isAccountEvent) return;
+
+          const matchesPhone =
+            phonesMatchForVerification(l.phone, cleanPhone) ||
+            (last10.length === 10 && descDigits.includes(last10));
+          const matchesMember =
+            (refId && matchedMemberIds.has(refId)) ||
+            (logUserId && matchedMemberUserIds.has(logUserId)) ||
+            Array.from(matchedMemberIds).some((id) => desc.toUpperCase().includes(id));
+
+          if (matchesPhone || matchesMember) {
+            reasons.push(
+              `ফায়ারবেস অ্যাক্টিভিটি লগে এই ব্যবহারকারীর পূর্ববর্তী অ্যাকাউন্ট ইতিহাস পাওয়া গেছে (${l.action || 'ACCOUNT_HISTORY'})।`
+            );
+            if (!existingAccountDetails) {
+              existingAccountDetails = {
+                source: 'activity_logs',
+                userId: logUserId || undefined,
+                memberSystemId: refId || primaryMember.systemId,
+                memberName: primaryMember.name,
+                registeredAt: l.timestamp || l.dateTime,
+              };
+            }
+          }
+        });
+      }
+
+      return {
+        checked: true,
+        memberFound: true,
+        matchedMembers,
+        primaryMember,
+        alreadyRegistered: reasons.length > 0,
+        reasons: Array.from(new Set(reasons)),
+        existingAccountDetails,
+      };
+    } catch (error: any) {
+      console.warn('Firebase registration history verification error:', error);
+      return {
+        checked: false,
+        connectionError:
+          'ফায়ারবেস সার্ভারের সাথে সংযোগ স্থাপন করে পূর্বের নিবন্ধন ইতিহাস যাচাই করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।',
+        memberFound: false,
+        matchedMembers: [],
+        alreadyRegistered: false,
+        reasons: [],
+      };
+    }
+  }
+
+  /**
+   * Record permanent registration history in Firestore (/registration_history/{historyId})
+   */
+  static async recordRegistrationHistoryInFirebase(params: {
+    phone: string;
+    userId: string;
+    firebaseUid?: string;
+    member: Member;
+    matchedMembers?: Member[];
+    source?: string;
+  }): Promise<void> {
+    const cleanPhone = normalizePhoneForAuth(params.phone);
+    const historyId = `REG-${cleanPhone}-${params.member.systemId}`;
+    const path = `registration_history/${historyId}`;
+    try {
+      const allIds = (params.matchedMembers && params.matchedMembers.length > 0
+        ? params.matchedMembers
+        : [params.member]
+      ).map((m) => m.systemId);
+
+      await setDoc(
+        doc(db, 'registration_history', historyId),
+        {
+          historyId,
+          phone: cleanPhone,
+          phoneLast10: cleanPhone.slice(-10),
+          authEmail: phoneToMemberAuthEmail(cleanPhone),
+          userId: params.userId,
+          firebaseUid: params.firebaseUid || params.userId,
+          memberSystemId: params.member.systemId,
+          memberSystemIds: Array.from(new Set(allIds)),
+          memberName: params.member.name,
+          registeredAt: new Date().toISOString(),
+          source: params.source || 'member_registration',
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  }
+
+  /**
+   * Register a new member account in Firebase Auth and Firestore ONLY after rigorous verification
    */
   static async registerMemberInFirebase(
     phone: string,
     pass: string,
-    member: Member
-  ): Promise<{ success: boolean; message: string; user?: UserAccount }> {
+    member: Member,
+    matchedMembers?: Member[]
+  ): Promise<{ success: boolean; alreadyRegistered?: boolean; message: string; user?: UserAccount }> {
     const cleanPhone = normalizePhoneForAuth(phone);
     const authEmail = phoneToMemberAuthEmail(cleanPhone);
 
     try {
+      // 1. Rigorous server-side verification across entire Firebase history BEFORE creating any Auth/Firestore record
+      const verification = await this.verifyRegistrationHistoryInFirebase(cleanPhone);
+      if (!verification.checked) {
+        return {
+          success: false,
+          message:
+            verification.connectionError ||
+            'ফায়ারবেস যাচাইকরণ সম্পন্ন করা যায়নি। আবার চেষ্টা করুন।',
+        };
+      }
+
+      if (!verification.memberFound || !verification.primaryMember) {
+        return {
+          success: false,
+          message:
+            verification.reasons[0] ||
+            'এই মোবাইল নম্বরটি ফায়ারবেস সদস্য তালিকায় পাওয়া যায়নি।',
+        };
+      }
+
+      if (verification.alreadyRegistered) {
+        return {
+          success: false,
+          alreadyRegistered: true,
+          message: `এই মোবাইল নম্বর দিয়ে ফায়ারবেসে পূর্বেই অ্যাকাউন্ট নিবন্ধিত হয়েছে (${verification.reasons[0] || 'আগের ইতিহাস পাওয়া গেছে'})। অনুগ্রহ করে লগইন করুন।`,
+        };
+      }
+
+      const targetMember = verification.primaryMember || member;
+      const linkedMembers =
+        matchedMembers && matchedMembers.length > 0
+          ? matchedMembers
+          : verification.matchedMembers;
+
+      // 2. Create Firebase Auth user — strictly reject if auth/email-already-in-use
       let firebaseUid = '';
       try {
         const cred = await createUserWithEmailAndPassword(auth, authEmail, pass);
         firebaseUid = cred.user.uid;
         try {
-          await updateProfile(cred.user, { displayName: member.name });
+          await updateProfile(cred.user, { displayName: targetMember.name });
         } catch {
           // Ignore profile update error
         }
       } catch (authError: any) {
         if (authError?.code === 'auth/email-already-in-use') {
-          // Try signing in with the provided password
-          try {
-            const loginCred = await signInWithEmailAndPassword(auth, authEmail, pass);
-            firebaseUid = loginCred.user.uid;
-          } catch {
-            return {
-              success: false,
-              message: 'এই মোবাইল নম্বরে ইতিমধ্যে ফায়ারবেস অ্যাকাউন্ট রয়েছে। দয়া করে লগইন করুন।',
-            };
-          }
-        } else {
-          console.warn('Firebase Auth user creation notice:', authError);
-          // Fallback UID if Firebase Auth email-password is not enabled in console
+          return {
+            success: false,
+            alreadyRegistered: true,
+            message:
+              'ফায়ারবেস অথেনটিকেশন ইতিহাসে এই মোবাইল নম্বরে ইতিমধ্যে একটি অ্যাকাউন্ট নিবন্ধিত রয়েছে। পুনরায় নিবন্ধন করা যাবে না — অনুগ্রহ করে লগইন করুন।',
+          };
+        }
+        if (authError?.code === 'auth/weak-password') {
+          return {
+            success: false,
+            message: 'ফায়ারবেস নিরাপত্তার জন্য পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।',
+          };
+        }
+        if (authError?.code === 'auth/network-request-failed') {
+          return {
+            success: false,
+            message: 'ফায়ারবেস নেটওয়ার্ক সংযোগ বিচ্ছিন্ন রয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।',
+          };
+        }
+        if (authError?.code === 'auth/operation-not-allowed') {
           firebaseUid = `FB-M-${cleanPhone}`;
+        } else {
+          return {
+            success: false,
+            message:
+              authError?.message ||
+              'ফায়ারবেস অথেনটিকেশনে অ্যাকাউন্ট তৈরি করা সম্ভব হয়নি।',
+          };
         }
       }
 
       const userId = firebaseUid || `USR-M-${cleanPhone}`;
+      const today = new Date().toISOString().split('T')[0];
+      const nowIso = new Date().toISOString();
       const newUser: UserAccount = {
         userId,
         firebaseUid,
         username: cleanPhone,
         phone: cleanPhone,
-        name: member.name,
-        displayName: `${member.name} (সদস্য)`,
+        name: targetMember.name,
+        displayName: `${targetMember.name} (সদস্য)`,
         role: 'member',
-        memberSystemId: member.systemId,
+        memberSystemId: targetMember.systemId,
         password: pass,
         status: 'active',
-        createdAt: new Date().toISOString().split('T')[0],
+        createdAt: today,
       };
 
-      // 1. Sync User Profile to Firestore
-      await this.syncUserProfile(newUser);
+      // 3. Sync User Profile to Firestore with registration flags
+      await setDoc(
+        doc(db, 'users', newUser.userId),
+        {
+          userId: newUser.userId,
+          firebaseUid: newUser.firebaseUid || newUser.userId,
+          displayName: newUser.displayName,
+          name: newUser.name,
+          username: cleanPhone,
+          role: 'member',
+          status: 'active',
+          email: '',
+          phone: cleanPhone,
+          memberSystemId: targetMember.systemId,
+          isMainAdmin: false,
+          password: pass,
+          isRegistered: true,
+          registeredAt: nowIso,
+          lastSyncedAt: nowIso,
+          createdAt: today,
+        },
+        { merge: true }
+      );
 
-      // 2. Link member record with this userId and sync to Firestore
-      member.userId = userId;
-      member.phone = cleanPhone;
-      member.updatedAt = new Date().toISOString().split('T')[0];
-      await this.syncMember(member);
+      // 4. Link member record with this userId and sync to Firestore
+      targetMember.userId = userId;
+      targetMember.phone = cleanPhone;
+      targetMember.updatedAt = today;
+      await this.syncMember(targetMember);
+
+      // 5. Record immutable registration history and cloud activity log
+      await this.recordRegistrationHistoryInFirebase({
+        phone: cleanPhone,
+        userId,
+        firebaseUid,
+        member: targetMember,
+        matchedMembers: linkedMembers,
+        source: 'member_registration',
+      });
+
+      await this.syncActivityLog({
+        logId: `LOG-REG-${Date.now()}`,
+        dateTime: new Date().toLocaleString('bn-BD'),
+        timestamp: nowIso,
+        userId,
+        userDisplayName: newUser.displayName,
+        role: 'member',
+        action: 'MEMBER_REGISTER',
+        module: 'Membership',
+        referenceId: targetMember.systemId,
+        description: `সদস্য "${targetMember.name}" (${targetMember.systemId}) মোবাইল নম্বর (${cleanPhone}) দিয়ে ফায়ারবেস যাচাইয়ের মাধ্যমে নিবন্ধন সম্পন্ন করেছেন।`,
+      });
 
       return {
         success: true,
-        message: `অভিনন্দন ${member.name}! ফায়ারবেস ক্লাউডে আপনার সদস্য অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`,
+        message: `অভিনন্দন ${targetMember.name}! ফায়ারবেস ক্লাউডে আপনার সদস্য অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`,
         user: newUser,
       };
     } catch (error: any) {
@@ -376,17 +1265,34 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Complete fresh member registration with Firebase Phone User
+   * Complete fresh member registration with Firebase Phone User (also enforces full history verification)
    */
   static async registerMemberWithFirebasePhoneUser(
     firebaseUid: string,
     phone: string,
     member: Member,
     password?: string
-  ): Promise<{ success: boolean; user: UserAccount; message: string }> {
+  ): Promise<{ success: boolean; alreadyRegistered?: boolean; user?: UserAccount; message: string }> {
     const cleanPhone = normalizePhoneForAuth(phone);
+
+    const verification = await this.verifyRegistrationHistoryInFirebase(cleanPhone);
+    if (!verification.checked) {
+      return {
+        success: false,
+        message: verification.connectionError || 'ফায়ারবেস ইতিহাস যাচাই করা যায়নি।',
+      };
+    }
+    if (verification.alreadyRegistered) {
+      return {
+        success: false,
+        alreadyRegistered: true,
+        message: `এই মোবাইল নম্বর দিয়ে ফায়ারবেসে পূর্বেই অ্যাকাউন্ট নিবন্ধিত হয়েছে (${verification.reasons[0] || 'আগের ইতিহাস পাওয়া গেছে'})। অনুগ্রহ করে লগইন করুন।`,
+      };
+    }
+
     const userId = firebaseUid || `USR-M-${cleanPhone}`;
     const today = new Date().toISOString().split('T')[0];
+    const nowIso = new Date().toISOString();
 
     const newUser: UserAccount = {
       userId,
@@ -403,13 +1309,45 @@ export class FirebaseSyncService {
     };
 
     // 1. Sync User Profile to Firestore
-    await this.syncUserProfile(newUser);
+    await setDoc(
+      doc(db, 'users', newUser.userId),
+      {
+        ...newUser,
+        isRegistered: true,
+        registeredAt: nowIso,
+        lastSyncedAt: nowIso,
+      },
+      { merge: true }
+    );
 
     // 2. Link member record with this userId and sync to Firestore
     member.userId = userId;
     member.phone = cleanPhone;
     member.updatedAt = today;
     await this.syncMember(member);
+
+    // 3. Record permanent registration history & activity log
+    await this.recordRegistrationHistoryInFirebase({
+      phone: cleanPhone,
+      userId,
+      firebaseUid,
+      member,
+      matchedMembers: verification.matchedMembers,
+      source: 'phone_auth_registration',
+    });
+
+    await this.syncActivityLog({
+      logId: `LOG-REG-${Date.now()}`,
+      dateTime: new Date().toLocaleString('bn-BD'),
+      timestamp: nowIso,
+      userId,
+      userDisplayName: newUser.displayName,
+      role: 'member',
+      action: 'MEMBER_PHONE_AUTH_REGISTER',
+      module: 'Membership',
+      referenceId: member.systemId,
+      description: `সদস্য "${member.name}" (${member.systemId}) ফায়ারবেস ফোন নম্বরের মাধ্যমে সফলভাবে ভেরিফাই ও নিবন্ধন সম্পন্ন করেছেন (${cleanPhone})।`,
+    });
 
     return {
       success: true,
@@ -917,12 +1855,15 @@ export class FirebaseSyncService {
         {
           logId: log.logId,
           dateTime: log.dateTime,
+          timestamp: log.timestamp || new Date().toISOString(),
           userId: log.userId,
           userDisplayName: log.userDisplayName,
           role: log.role,
           action: log.action,
           module: log.module,
+          referenceId: log.referenceId || '',
           description: log.description,
+          details: log.details || log.description,
         },
         { merge: true }
       );
@@ -1163,6 +2104,7 @@ export class FirebaseSyncService {
     try {
       const [
         usersSnap,
+        adminsSnap,
         membersSnap,
         contributionsSnap,
         loansSnap,
@@ -1177,6 +2119,7 @@ export class FirebaseSyncService {
         transactionsSnap,
       ] = await Promise.allSettled([
         getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'admins')),
         getDocs(collection(db, 'members')),
         getDocs(collection(db, 'contributions')),
         getDocs(collection(db, 'loans')),
@@ -1191,15 +2134,47 @@ export class FirebaseSyncService {
         getDocs(collection(db, 'transactions')),
       ]);
 
+      const mergedUserMap = new Map<string, UserAccount>();
       if (usersSnap.status === 'fulfilled') {
-        const users: UserAccount[] = [];
         usersSnap.value.forEach((d) => {
-          const u = d.data();
+          const u = d.data() as any;
           if (u?.userId) {
-            users.push(u as UserAccount);
+            mergedUserMap.set(u.userId, {
+              ...(u as UserAccount),
+              isMainAdmin: isStrictMainAdminAccount(u as UserAccount),
+            });
           }
         });
-        if (users.length > 0) result.users = users;
+      }
+      if (adminsSnap.status === 'fulfilled') {
+        adminsSnap.value.forEach((d) => {
+          const a = d.data() as any;
+          const uid = a?.userId || a?.uid || d.id;
+          if (!uid || !a?.email) return;
+          const cleanEmail = String(a.email).toLowerCase().trim();
+          const isMain = cleanEmail === MAIN_ADMIN_EMAIL_CONST.toLowerCase();
+          if (isMain) return;
+          const existing = mergedUserMap.get(uid);
+          mergedUserMap.set(uid, {
+            ...(existing || {}),
+            userId: uid,
+            firebaseUid: a.uid || existing?.firebaseUid || uid,
+            username: existing?.username || cleanEmail.split('@')[0],
+            email: cleanEmail,
+            name: a.name || existing?.name || a.displayName || cleanEmail,
+            displayName: a.displayName || existing?.displayName || a.name || cleanEmail,
+            role: a.role || existing?.role || 'admin',
+            status: a.status || existing?.status || 'active',
+            password: a.password || existing?.password || '',
+            createdAt:
+              existing?.createdAt ||
+              (a.createdAt ? String(a.createdAt).split('T')[0] : new Date().toISOString().split('T')[0]),
+            isMainAdmin: false,
+          } as UserAccount);
+        });
+      }
+      if (mergedUserMap.size > 0) {
+        result.users = Array.from(mergedUserMap.values());
       }
 
       if (membersSnap.status === 'fulfilled') {

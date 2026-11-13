@@ -5,11 +5,18 @@
       "description": "System administrator with elevated governance privileges",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "description": "Firebase Auth UID of administrator" },
+        "uid": { "type": "string", "description": "Firebase Auth or System UID of administrator" },
+        "userId": { "type": "string", "description": "System User ID of administrator" },
         "email": { "type": "string", "format": "email", "description": "Admin email address" },
+        "name": { "type": "string", "maxLength": 100, "description": "Full name" },
         "displayName": { "type": "string", "maxLength": 100, "description": "Full display name" },
+        "role": { "type": "string", "enum": ["admin", "president", "treasurer", "secretary"], "description": "Admin or committee role" },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Account status" },
         "isMainAdmin": { "type": "boolean", "description": "Super admin flag" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "addedBy": { "type": "string", "description": "Main Admin email who created this admin" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "passwordUpdatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "createdAt"]
     },
@@ -251,6 +258,24 @@
       },
       "required": ["transactionId", "date", "type", "description"]
     },
+    "RegistrationHistory": {
+      "title": "RegistrationHistory",
+      "description": "Immutable member account registration history used to verify prior registrations in Firebase",
+      "type": "object",
+      "properties": {
+        "historyId": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "phoneLast10": { "type": "string", "maxLength": 15 },
+        "authEmail": { "type": "string", "maxLength": 120 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "firebaseUid": { "type": "string", "maxLength": 128 },
+        "memberSystemId": { "type": "string", "maxLength": 64 },
+        "memberName": { "type": "string", "maxLength": 100 },
+        "registeredAt": { "type": "string", "format": "date-time" },
+        "source": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["historyId", "phone", "userId", "memberSystemId", "registeredAt"]
+    },
     "Settings": {
       "title": "Settings",
       "description": "Global application organization settings and administrator security configuration",
@@ -316,6 +341,10 @@
     "/activity_logs/{logId}": {
       "schema": { "$ref": "#/entities/ActivityLog" },
       "description": "Tamper-evident activity audit logs"
+    },
+    "/registration_history/{historyId}": {
+      "schema": { "$ref": "#/entities/RegistrationHistory" },
+      "description": "Permanent historical record of member registrations"
     },
     "/incomes/{incomeId}": {
       "schema": { "$ref": "#/entities/Income" },

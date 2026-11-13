@@ -22,6 +22,8 @@ import {
   ArrowRight,
   UserCheck,
   Sparkles,
+  Loader2,
+  ShieldAlert,
 } from 'lucide-react';
 
 export type AuthMode = 'login' | 'register' | 'member_login' | 'admin_login';
@@ -57,11 +59,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showRegConfirm, setShowRegConfirm] = useState(false);
+  const [regCheckingFirebase, setRegCheckingFirebase] = useState(false);
   const [regLiveCheck, setRegLiveCheck] = useState<{
+    checked: boolean;
     found: boolean;
     memberName?: string;
     memberId?: string;
+    matchedIds?: string[];
     alreadyRegistered?: boolean;
+    reasons?: string[];
+    connectionError?: string;
     message?: string;
   } | null>(null);
 
@@ -80,6 +87,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setRegPhone('');
       setRegPassword('');
       setRegConfirmPassword('');
+      setRegCheckingFirebase(false);
       setRegLiveCheck(null);
       setIsSubmitting(false);
     }
@@ -116,32 +124,96 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const isMemberInput = !isEmailInput && (Boolean(matchingMemberForLogin) || cleanDigits.length >= 3);
   const isPhoneInput = isMemberInput;
 
-  // Live member lookup as user enters phone number in registration
+  // Live thorough Firebase history verification as user enters phone number in registration
   useEffect(() => {
+    if (!isOpen || activeTab !== 'register') return;
     const clean = normalizePhoneNumber(regPhone);
-    if (clean.length >= 10) {
-      const check = StorageService.checkMemberRegistryByPhone(clean);
-      if (check.found && check.member) {
-        setRegLiveCheck({
-          found: true,
-          memberName: check.member.name,
-          memberId: check.member.systemId,
-          alreadyRegistered: check.alreadyRegistered,
-          message: check.message,
-        });
-      } else {
-        setRegLiveCheck({
-          found: false,
-          message:
-            language === 'bn'
-              ? '⚠️ এই নম্বরটি সমিতির সদস্য তালিকায় পাওয়া যায়নি। একাউন্ট খুলতে আপনার নম্বরটি সদস্য তালিকায় নিবন্ধিত থাকতে হবে।'
-              : '⚠️ This phone number is not listed in the society member registry.',
-        });
-      }
-    } else {
+    if (clean.length < 10) {
+      setRegCheckingFirebase(false);
       setRegLiveCheck(null);
+      return;
     }
-  }, [regPhone, language]);
+
+    let cancelled = false;
+    setRegCheckingFirebase(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const fbResult = await FirebaseSyncService.verifyRegistrationHistoryInFirebase(clean);
+        if (cancelled) return;
+
+        if (!fbResult.checked) {
+          setRegLiveCheck({
+            checked: false,
+            found: false,
+            connectionError: fbResult.connectionError,
+            message:
+              fbResult.connectionError ||
+              (language === 'bn'
+                ? '⚠️ ফায়ারবেস সার্ভারের সাথে সংযোগ যাচাই করা যায়নি।'
+                : '⚠️ Could not verify registration history with Firebase.'),
+          });
+        } else if (!fbResult.memberFound || !fbResult.primaryMember) {
+          setRegLiveCheck({
+            checked: true,
+            found: false,
+            message:
+              language === 'bn'
+                ? '⚠️ এই নম্বরটি ফায়ারবেস সদস্য তালিকায় পাওয়া যায়নি। অ্যাকাউন্ট খুলতে আপনার নম্বরটি সদস্য তালিকায় নিবন্ধিত থাকতে হবে।'
+                : '⚠️ This phone number is not listed in the society member registry in Firebase.',
+          });
+        } else if (fbResult.alreadyRegistered) {
+          setRegLiveCheck({
+            checked: true,
+            found: true,
+            memberName: fbResult.primaryMember.name,
+            memberId: fbResult.primaryMember.systemId,
+            matchedIds: fbResult.matchedMembers.map((m) => m.systemId),
+            alreadyRegistered: true,
+            reasons: fbResult.reasons,
+            message:
+              fbResult.reasons[0] ||
+              (language === 'bn'
+                ? `সদস্য "${fbResult.primaryMember.name}" এর জন্য ফায়ারবেসে পূর্বেই নিবন্ধন পাওয়া গেছে। অনুগ্রহ করে লগইন করুন।`
+                : `Member "${fbResult.primaryMember.name}" is already registered in Firebase history. Please log in.`),
+          });
+        } else {
+          setRegLiveCheck({
+            checked: true,
+            found: true,
+            memberName: fbResult.primaryMember.name,
+            memberId: fbResult.primaryMember.systemId,
+            matchedIds: fbResult.matchedMembers.map((m) => m.systemId),
+            alreadyRegistered: false,
+            message:
+              language === 'bn'
+                ? 'ফায়ারবেস ইতিহাস যাচাই সম্পন্ন — প্রথমবারের মতো নিবন্ধন যোগ্য!'
+                : 'Firebase history verified — eligible for first-time registration!',
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setRegLiveCheck({
+            checked: false,
+            found: false,
+            message:
+              language === 'bn'
+                ? '⚠️ ফায়ারবেস সার্ভার যাচাইয়ে ত্রুটি হয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।'
+                : '⚠️ Error verifying history with Firebase. Please check your connection.',
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setRegCheckingFirebase(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [regPhone, activeTab, isOpen, language]);
 
   if (!isOpen) return null;
 
@@ -180,7 +252,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       const cleanEmail = inputVal.toLowerCase();
-      const result = StorageService.loginWithCredentials(cleanEmail, passVal);
+      let result = StorageService.loginWithCredentials(cleanEmail, passVal);
+
+      // Cross-device fallback: fetch latest admin/user & password directly from Firestore
+      if (!result.success) {
+        try {
+          const fbLookup = await FirebaseSyncService.fetchUserOrAdminByEmailFromFirestore(cleanEmail);
+          if (fbLookup.user || fbLookup.settings) {
+            StorageService.mergeCloudData({
+              ...(fbLookup.user ? { users: [fbLookup.user] } : {}),
+              ...(fbLookup.settings ? { settings: fbLookup.settings } : {}),
+            });
+            result = StorageService.loginWithCredentials(cleanEmail, passVal);
+          }
+        } catch (fetchErr) {
+          console.warn('Direct admin/user Firestore login attempt notice:', fetchErr);
+        }
+      }
+
       setIsSubmitting(false);
 
       if (result.success && result.user) {
@@ -240,7 +329,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // Handle Member Registration Submit (Direct registration without SMS OTP or CAPTCHA)
+  // Handle Member Registration Submit (Rigorous full-history Firebase verification BEFORE registering)
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -256,11 +345,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (regPassword.trim().length < 4) {
+    if (regPassword.trim().length < 6) {
       setErrorMsg(
         language === 'bn'
-          ? 'পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে।'
-          : 'Password must be at least 4 characters.'
+          ? 'নিরাপত্তার জন্য পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।'
+          : 'Password must be at least 6 characters.'
       );
       return;
     }
@@ -276,40 +365,114 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsSubmitting(true);
 
-    // 1. Verify member exists in registry
-    const check = StorageService.checkMemberRegistryByPhone(cleanPhone);
-    if (!check.found || !check.member) {
-      setIsSubmitting(false);
-      setErrorMsg(
-        check.message ||
-          (language === 'bn'
-            ? 'এই মোবাইল নম্বরটি সমিতির সদস্য তালিকায় পাওয়া যায়নি।'
-            : 'Phone number not in registry.')
-      );
-      return;
-    }
-
     try {
-      // Register directly in local registry and user account
-      const localResult = StorageService.registerMemberWithPhone(cleanPhone, regPassword.trim());
+      // 1. Fresh, thorough verification via Firebase server covering entire user history
+      const fbCheck = await FirebaseSyncService.verifyRegistrationHistoryInFirebase(cleanPhone);
+
+      if (!fbCheck.checked) {
+        setIsSubmitting(false);
+        setRegLiveCheck({
+          checked: false,
+          found: false,
+          connectionError: fbCheck.connectionError,
+          message: fbCheck.connectionError,
+        });
+        setErrorMsg(
+          fbCheck.connectionError ||
+            (language === 'bn'
+              ? 'ফায়ারবেস সার্ভার থেকে পূর্বের ইতিহাস যাচাই করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।'
+              : 'Could not verify registration history via Firebase. Please check your connection.')
+        );
+        return;
+      }
+
+      if (!fbCheck.memberFound || !fbCheck.primaryMember) {
+        setIsSubmitting(false);
+        setRegLiveCheck({
+          checked: true,
+          found: false,
+          message: fbCheck.reasons[0],
+        });
+        setErrorMsg(
+          fbCheck.reasons[0] ||
+            (language === 'bn'
+              ? 'এই মোবাইল নম্বরটি ফায়ারবেস সদস্য তালিকায় পাওয়া যায়নি।'
+              : 'Phone number not found in Firebase member registry.')
+        );
+        return;
+      }
+
+      if (fbCheck.alreadyRegistered) {
+        setIsSubmitting(false);
+        setRegLiveCheck({
+          checked: true,
+          found: true,
+          memberName: fbCheck.primaryMember.name,
+          memberId: fbCheck.primaryMember.systemId,
+          matchedIds: fbCheck.matchedMembers.map((m) => m.systemId),
+          alreadyRegistered: true,
+          reasons: fbCheck.reasons,
+          message: fbCheck.reasons[0],
+        });
+        setErrorMsg(
+          language === 'bn'
+            ? `এই মোবাইল নম্বর দিয়ে ফায়ারবেস ইতিহাসে পূর্বেই নিবন্ধন পাওয়া গেছে (${fbCheck.reasons[0] || 'আগের অ্যাকাউন্ট রয়েছে'})। পুনরায় নিবন্ধন করা যাবে না — অনুগ্রহ করে লগইন করুন।`
+            : `Previous registration found in Firebase history for this phone (${fbCheck.reasons[0] || 'existing account'}). Please log in instead.`
+        );
+        return;
+      }
+
+      // 2. Register in Firebase Auth + Firestore (also re-verifies auth/email-already-in-use & history)
+      const fbReg = await FirebaseSyncService.registerMemberInFirebase(
+        cleanPhone,
+        regPassword.trim(),
+        fbCheck.primaryMember,
+        fbCheck.matchedMembers
+      );
+
+      if (!fbReg.success || !fbReg.user) {
+        setIsSubmitting(false);
+        if (fbReg.alreadyRegistered) {
+          setRegLiveCheck({
+            checked: true,
+            found: true,
+            memberName: fbCheck.primaryMember.name,
+            memberId: fbCheck.primaryMember.systemId,
+            matchedIds: fbCheck.matchedMembers.map((m) => m.systemId),
+            alreadyRegistered: true,
+            reasons: [fbReg.message],
+            message: fbReg.message,
+          });
+        }
+        setErrorMsg(fbReg.message);
+        return;
+      }
+
+      // 3. Persist verified registration locally and log in
+      StorageService.completeVerifiedFirebaseRegistration(
+        fbReg.user,
+        fbCheck.primaryMember,
+        fbCheck.matchedMembers
+      );
       setIsSubmitting(false);
 
-      if (localResult.success && localResult.user) {
-        setSuccessMsg(
-          language === 'bn'
-            ? `অভিনন্দন ${check.member.name}! আপনার সদস্য অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`
-            : `Congratulations ${check.member.name}! Your account has been registered successfully.`
-        );
-        setTimeout(() => {
-          onSuccess(localResult.user!);
-          onClose();
-        }, 500);
-      } else {
-        setErrorMsg(localResult.message);
-      }
+      setSuccessMsg(
+        language === 'bn'
+          ? `অভিনন্দন ${fbCheck.primaryMember.name}! ফায়ারবেস যাচাই সম্পন্ন হয়ে আপনার সদস্য অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`
+          : `Congratulations ${fbCheck.primaryMember.name}! Your account has been verified and registered in Firebase.`
+      );
+      setTimeout(() => {
+        onSuccess(fbReg.user!);
+        onClose();
+      }, 500);
     } catch (err: any) {
       setIsSubmitting(false);
-      setErrorMsg(err?.message || 'নিবন্ধন প্রক্রিয়ায় সমস্যা হয়েছে।');
+      setErrorMsg(
+        err?.message ||
+          (language === 'bn'
+            ? 'ফায়ারবেস নিবন্ধন যাচাই প্রক্রিয়ায় সমস্যা হয়েছে।'
+            : 'Error during Firebase registration verification.')
+      );
     }
   };
 
@@ -698,56 +861,101 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 </div>
 
-                {/* Real-time registry verification status */}
-                {regLiveCheck && (
+                {/* Real-time Firebase complete history verification status */}
+                {regCheckingFirebase ? (
+                  <div className="mt-2 p-2.5 rounded-xl text-xs flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 animate-in fade-in">
+                    <Loader2 className="w-4 h-4 text-emerald-600 animate-spin flex-shrink-0" />
+                    <span>
+                      {language === 'bn'
+                        ? 'ফায়ারবেসে আপনার সম্পূর্ণ পূর্ব-ইতিহাস যাচাই করা হচ্ছে...'
+                        : 'Verifying complete registration history in Firebase...'}
+                    </span>
+                  </div>
+                ) : regLiveCheck ? (
                   <div
-                    className={`mt-2 p-2.5 rounded-xl text-xs flex items-center gap-2 animate-in fade-in ${
-                      regLiveCheck.found && !regLiveCheck.alreadyRegistered
+                    className={`mt-2 p-2.5 rounded-xl text-xs flex items-start gap-2 animate-in fade-in ${
+                      !regLiveCheck.checked
+                        ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+                        : regLiveCheck.found && !regLiveCheck.alreadyRegistered
                         ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
                         : regLiveCheck.alreadyRegistered
-                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700'
                         : 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
                     }`}
                   >
-                    {regLiveCheck.found && !regLiveCheck.alreadyRegistered ? (
+                    {!regLiveCheck.checked ? (
                       <>
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                        <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                        <span className="text-[11px]">{regLiveCheck.message}</span>
+                      </>
+                    ) : regLiveCheck.found && !regLiveCheck.alreadyRegistered ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                         <div>
                           <div className="font-bold">✓ {regLiveCheck.memberName}</div>
                           <div className="text-[10px] opacity-90">
-                            {language === 'bn' ? `সদস্য আইডি: ${regLiveCheck.memberId} - নিবন্ধন যোগ্য!` : `ID: ${regLiveCheck.memberId} - Verified!`}
+                            {language === 'bn'
+                              ? `সদস্য আইডি: ${(regLiveCheck.matchedIds || [regLiveCheck.memberId]).join(', ')} • ফায়ারবেস ইতিহাস যাচাই সম্পন্ন — নিবন্ধন যোগ্য!`
+                              : `ID: ${(regLiveCheck.matchedIds || [regLiveCheck.memberId]).join(', ')} • Verified in Firebase — Eligible!`}
                           </div>
                         </div>
                       </>
                     ) : regLiveCheck.alreadyRegistered ? (
                       <>
-                        <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                        <div>
-                          <div className="font-bold">{regLiveCheck.memberName}</div>
-                          <div className="text-[10px]">{regLiveCheck.message}</div>
+                        <ShieldAlert className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1 space-y-1">
+                          <div className="font-bold">
+                            {language === 'bn'
+                              ? `${regLiveCheck.memberName} — পূর্বেই নিবন্ধিত!`
+                              : `${regLiveCheck.memberName} — Already Registered!`}
+                          </div>
+                          <div className="text-[11px] leading-snug">
+                            {regLiveCheck.reasons && regLiveCheck.reasons.length > 0
+                              ? regLiveCheck.reasons.map((r, i) => (
+                                  <div key={i}>• {r}</div>
+                                ))
+                              : regLiveCheck.message}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('login');
+                              setLoginIdentifier(regPhone);
+                              setErrorMsg(null);
+                            }}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300 underline cursor-pointer pt-0.5"
+                          >
+                            <span>
+                              {language === 'bn'
+                                ? 'লগইন ট্যাবে গিয়ে প্রবেশ করুন'
+                                : 'Go to Login tab'}
+                            </span>
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
                         </div>
                       </>
                     ) : (
                       <>
-                        <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                        <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
                         <span className="text-[11px]">{regLiveCheck.message}</span>
                       </>
                     )}
                   </div>
-                )}
+                ) : null}
               </div>
 
               {/* Password Inputs */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {language === 'bn' ? 'পাসওয়ার্ড নির্ধারণ করুন:' : 'Set Password:'}{' '}
+                    {language === 'bn' ? 'পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর):' : 'Set Password (min 6 chars):'}{' '}
                     <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <input
                       type={showRegPassword ? 'text' : 'password'}
                       required
+                      minLength={6}
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       placeholder="New Password"
@@ -773,6 +981,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <input
                       type={showRegConfirm ? 'text' : 'password'}
                       required
+                      minLength={6}
                       value={regConfirmPassword}
                       onChange={(e) => setRegConfirmPassword(e.target.value)}
                       placeholder="Confirm Password"
@@ -793,11 +1002,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* Submit Registration */}
               <button
                 type="submit"
-                disabled={isSubmitting || (regLiveCheck?.found === false)}
-                className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
+                disabled={
+                  isSubmitting ||
+                  regCheckingFirebase ||
+                  !regLiveCheck ||
+                  !regLiveCheck.checked ||
+                  !regLiveCheck.found ||
+                  Boolean(regLiveCheck.alreadyRegistered)
+                }
+                className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
                 {isSubmitting ? (
-                  <span>{language === 'bn' ? 'অ্যাকাউন্ট তৈরি হচ্ছে...' : 'Registering...'}</span>
+                  <span>
+                    {language === 'bn'
+                      ? 'ফায়ারবেসে যাচাই ও নিবন্ধন চলছে...'
+                      : 'Verifying history & registering...'}
+                  </span>
                 ) : (
                   <>
                     <UserPlus className="w-4 h-4" />

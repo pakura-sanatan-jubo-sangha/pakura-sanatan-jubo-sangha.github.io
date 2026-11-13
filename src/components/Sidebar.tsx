@@ -1,6 +1,7 @@
 import React from 'react';
 import { UserAccount, Language, Theme } from '../types';
 import { getTranslation } from '../lib/translations';
+import { isStrictMainAdmin } from '../lib/storage';
 import {
   LayoutDashboard,
   Users,
@@ -75,12 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
   const isMember = currentUser.role === 'member' && !isViewOnly;
   const isAdmin = currentUser.role === 'admin';
-  const isMainAdmin =
-    isAdmin &&
-    (currentUser.isMainAdmin === true ||
-      currentUser.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' ||
-      currentUser.userId === 'USR-000001' ||
-      currentUser.userId === 'USR-MAIN-ADMIN');
+  const isMainAdmin = isStrictMainAdmin(currentUser);
 
   // Role-specific navigation items:
   // When not logged in (isViewOnly), Home Dashboard is hidden until login!

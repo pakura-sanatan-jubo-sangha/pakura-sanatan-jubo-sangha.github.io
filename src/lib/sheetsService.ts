@@ -14,7 +14,7 @@ import {
   FullAppData,
 } from '../types';
 import { getAccessToken, googleSignIn, clearCachedAccessToken, auth } from './firebase';
-import { StorageService, MAIN_ADMIN_EMAIL, MAIN_ADMIN_ACCOUNT } from './storage';
+import { StorageService, MAIN_ADMIN_EMAIL, MAIN_ADMIN_ACCOUNT, isStrictMainAdmin } from './storage';
 
 export const SPREADSHEET_TITLE = 'PAKURA_SANATAN_YUVA_SANGHA_DB';
 
@@ -181,18 +181,13 @@ export function generateAllSheetValueRanges(
     ...data.users.filter(
       (u) =>
         u.email?.toLowerCase() !== MAIN_ADMIN_EMAIL.toLowerCase() &&
-        u.userId !== 'USR-MAIN-ADMIN' &&
-        u.userId !== 'USR-000001'
+        u.userId !== 'USR-MAIN-ADMIN'
     ),
   ];
   const userRows: (string | number)[][] = [
     ['Admin Type (অ্যাডমিন পদবী)', 'Name (পূর্ণ নাম)', 'Gmail Address (জিমেইল / ইমেইল)'],
     ...allAdmins.map((u) => {
-      const isMain =
-        u.isMainAdmin ||
-        u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        u.userId === 'USR-000001' ||
-        u.userId === 'USR-MAIN-ADMIN';
+      const isMain = isStrictMainAdmin(u);
       const adminType = isMain
         ? 'Main Admin (প্রধান সুপার অ্যাডমিন)'
         : u.role === 'admin'
@@ -814,7 +809,7 @@ function doPost(e) {
     if (data.users && data.users.length > 0) {
       data.users.forEach(function(u) {
         var email = (u.email || "").toLowerCase().trim();
-        if (email !== "freelancerkajolchandradas@gmail.com" && u.userId !== "USR-MAIN-ADMIN" && u.userId !== "USR-000001") {
+        if (email !== "freelancerkajolchandradas@gmail.com" && u.userId !== "USR-MAIN-ADMIN") {
           var type = u.role === "admin" ? "General Admin (সহকারী অ্যাডমিন)" : (u.role === "president" ? "President (সভাপতি)" : (u.role === "treasurer" ? "Treasurer (কোষাধ্যক্ষ)" : (u.role === "secretary" ? "Secretary (সাধারণ সম্পাদক)" : "Member (সদস্য)")));
           usersList.push([type, u.name || u.displayName || "", u.email || ""]);
         }
@@ -1016,9 +1011,7 @@ export class GoogleSheetsService {
 
     // Check logged-in profile:
     // Only Main Super Admin (freelancerkajolchandradas@gmail.com or isMainAdmin) can modify Google Sheets
-    const isMainAdminProfile =
-      currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-      (currentUser.role === 'admin' && (currentUser.isMainAdmin === true || currentUser.userId === 'USR-MAIN-ADMIN' || currentUser.userId === 'USR-000001'));
+    const isMainAdminProfile = isStrictMainAdmin(currentUser);
 
     if (!isMainAdminProfile) {
       throw new Error(

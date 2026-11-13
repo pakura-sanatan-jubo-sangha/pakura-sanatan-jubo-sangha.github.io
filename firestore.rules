@@ -205,5 +205,12 @@ service cloud.firestore {
       allow get, list: if true;
       allow create, update, delete: if true;
     }
+
+    // 17. Permanent Registration History (Audit Trail for Duplicate Registration Verification)
+    match /registration_history/{historyId} {
+      allow get, list: if true;
+      allow create, update: if true;
+      allow delete: if false;
+    }
   }
 }

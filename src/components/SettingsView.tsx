@@ -34,6 +34,7 @@ interface SettingsViewProps {
   onResetDatabase: () => void;
   onExportJson: () => void;
   onImportJson: (jsonString: string) => void;
+  onPasswordUpdated?: (message?: string) => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -44,6 +45,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onResetDatabase,
   onExportJson,
   onImportJson,
+  onPasswordUpdated,
 }) => {
   const t = getTranslation(language);
   const [orgName, setOrgName] = useState(settings.societyName || 'পাকুড়া সনাতন যুব সংঘ');
@@ -75,6 +77,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [showNewPass, setShowNewPass] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
   const handleSubmitGeneral = (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +96,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setSavedSuccess(false), 3000);
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError(null);
     setPasswordSuccess(null);
@@ -114,19 +117,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
-    const res = StorageService.updateAdminPassword(currentPassword, newPassword, currentUser);
-    if (!res.success) {
-      setPasswordError(res.message);
-    } else {
-      setPasswordSuccess(
-        language === 'bn'
-          ? 'প্রধান অ্যাডমিনের পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে!'
-          : 'Admin password successfully updated!'
+    setIsUpdatingPassword(true);
+    try {
+      const res = await StorageService.updateAdminPasswordWithFirebaseSync(
+        currentPassword,
+        newPassword,
+        currentUser
       );
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      setTimeout(() => setPasswordSuccess(null), 4000);
+      if (!res.success) {
+        setPasswordError(res.message);
+      } else {
+        const msg =
+          language === 'bn'
+            ? 'প্রধান অ্যাডমিনের পাসওয়ার্ড সফলভাবে পরিবর্তন ও ফায়ারবেসে হালনাগাদ করা হয়েছে!'
+            : 'Admin password successfully updated and synced to Firebase!';
+        setPasswordSuccess(msg);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        if (onPasswordUpdated) onPasswordUpdated(msg);
+        setTimeout(() => setPasswordSuccess(null), 5000);
+      }
+    } catch (err: any) {
+      setPasswordError(
+        err?.message ||
+          (language === 'bn'
+            ? 'ফায়ারবেসে পাসওয়ার্ড হালনাগাদ করতে সমস্যা হয়েছে।'
+            : 'Error updating password in Firebase.')
+      );
+    } finally {
+      setIsUpdatingPassword(false);
     }
   };
 
@@ -261,8 +281,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (!isMatch) {
       setResetEmailError(
         language === 'bn'
-          ? 'ভুল জিমেইল ঠিকানা! রিসেট সম্পন্ন করতে অনুমোদিত অ্যাডমিন জিমেইল লিখুন (e.g., freelancerkajolchandradas@gmail.com)।'
-          : 'Invalid Gmail address! Please enter authorized admin Gmail (e.g., freelancerkajolchandradas@gmail.com).'
+          ? 'ভুল জিমেইল ঠিকানা! রিসেট সম্পন্ন করতে অনুমোদিত অ্যাডমিন জিমেইল লিখুন।'
+          : 'Invalid Gmail address! Please enter authorized admin Gmail.'
       );
       return;
     }
@@ -393,10 +413,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           <button
             type="submit"
-            className="px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-2 shadow-xs transition-all"
+            disabled={isUpdatingPassword}
+            className="px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-2 shadow-xs transition-all cursor-pointer disabled:opacity-60"
           >
-            <Lock className="w-4 h-4" />
-            <span>{language === 'bn' ? 'পাসওয়ার্ড পরিবর্তন সম্পন্ন করুন' : 'Update Admin Password'}</span>
+            {isUpdatingPassword ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <Lock className="w-4 h-4" />
+            )}
+            <span>
+              {isUpdatingPassword
+                ? (language === 'bn' ? 'ফায়ারবেসে আপডেট হচ্ছে...' : 'Updating Firebase...')
+                : (language === 'bn' ? 'পাসওয়ার্ড পরিবর্তন সম্পন্ন করুন' : 'Update Admin Password')}
+            </span>
           </button>
         </form>
       </div>
@@ -815,15 +844,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     setResetConfirmEmail(e.target.value);
                     setResetEmailError(null);
                   }}
-                  placeholder="freelancerkajolchandradas@gmail.com"
+                  placeholder="pakurasanatan@gmail.com"
                   className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/20 font-mono"
                   autoFocus
                 />
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {language === 'bn'
-                  ? 'নিশ্চিতকরণ জিমেইল: freelancerkajolchandradas@gmail.com'
-                  : 'Authorized Admin Gmail: freelancerkajolchandradas@gmail.com'}
+                  ? 'নিশ্চিতকরণ জিমেইল:pakurasanatan@gmail.com'
+                  : 'Authorized Admin Gmail:pakurasanatan@gmail.com'}
               </p>
 
               {resetEmailError && (

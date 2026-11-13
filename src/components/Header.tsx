@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UserAccount, Language, Theme } from '../types';
 import { getTranslation } from '../lib/translations';
-import { StorageService } from '../lib/storage';
+import { StorageService, isStrictMainAdmin } from '../lib/storage';
+import { FirebaseSyncService } from '../lib/firebaseSync';
 import { EnrichedNotification } from '../lib/notifications';
 import {
   googleSignIn,
@@ -53,6 +54,7 @@ interface HeaderProps {
   onMarkNotificationRead?: (id: string) => void;
   onMarkAllNotificationsRead?: () => void;
   onNavigateTab?: (tab: string) => void;
+  onPasswordUpdated?: (message?: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -77,6 +79,7 @@ export const Header: React.FC<HeaderProps> = ({
   onMarkNotificationRead,
   onMarkAllNotificationsRead,
   onNavigateTab,
+  onPasswordUpdated,
 }) => {
   const t = getTranslation(language);
   const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
@@ -127,8 +130,20 @@ export const Header: React.FC<HeaderProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
+  // Self-service admin/committee password change modal state
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [currPass, setCurrPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [showChangePassFields, setShowChangePassFields] = useState(false);
+  const [passErr, setPassErr] = useState<string | null>(null);
+  const [passSuccess, setPassSuccess] = useState<string | null>(null);
+  const [isUpdatingPass, setIsUpdatingPass] = useState(false);
+
   const isAdmin = currentUser.role === 'admin';
   const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
+  const canChangeAdminPassword =
+    !isViewOnly && ['admin', 'president', 'treasurer', 'secretary'].includes(currentUser.role);
 
   // Handle Login Authentication (Main Admin or Standard Admin / Member)
   const handleAdminLoginSubmit = async (e: React.FormEvent) => {
@@ -151,7 +166,24 @@ export const Header: React.FC<HeaderProps> = ({
     setIsAuthenticating(true);
     try {
       // Validate credentials using internal secure credential store
-      const res = StorageService.loginWithCredentials(emailTrimmed, passTrimmed);
+      let res = StorageService.loginWithCredentials(emailTrimmed, passTrimmed);
+
+      // Cross-device fallback: fetch latest admin/user & password directly from Firestore
+      if (!res.success && emailTrimmed.includes('@')) {
+        try {
+          const fbLookup = await FirebaseSyncService.fetchUserOrAdminByEmailFromFirestore(emailTrimmed);
+          if (fbLookup.user || fbLookup.settings) {
+            StorageService.mergeCloudData({
+              ...(fbLookup.user ? { users: [fbLookup.user] } : {}),
+              ...(fbLookup.settings ? { settings: fbLookup.settings } : {}),
+            });
+            res = StorageService.loginWithCredentials(emailTrimmed, passTrimmed);
+          }
+        } catch (fbErr) {
+          console.warn('Firestore credential lookup notice:', fbErr);
+        }
+      }
+
       if (res.success && res.user) {
         setLoginSuccessMsg(res.message);
 
@@ -169,6 +201,70 @@ export const Header: React.FC<HeaderProps> = ({
       setLoginError(formatFirebaseAuthError(err, language));
     } finally {
       setIsAuthenticating(false);
+    }
+  };
+
+  const handleHeaderPasswordChangeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassErr(null);
+    setPassSuccess(null);
+
+    if (newPass.trim() !== confirmPass.trim()) {
+      setPassErr(
+        language === 'bn' ? 'নতুন পাসওয়ার্ড দুটি মেলেনি!' : 'New passwords do not match!'
+      );
+      return;
+    }
+
+    if (newPass.trim().length < 4) {
+      setPassErr(
+        language === 'bn'
+          ? 'নতুন পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে।'
+          : 'Password must be at least 4 characters long.'
+      );
+      return;
+    }
+
+    setIsUpdatingPass(true);
+    try {
+      const res = isStrictMainAdmin(currentUser)
+        ? await StorageService.updateAdminPasswordWithFirebaseSync(
+            currPass.trim(),
+            newPass.trim(),
+            currentUser
+          )
+        : await StorageService.changeUserPasswordAndSyncFirebase(
+            currentUser.userId,
+            newPass.trim(),
+            currPass.trim()
+          );
+
+      if (!res.success) {
+        setPassErr(res.message);
+      } else {
+        const msg =
+          language === 'bn'
+            ? 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে এবং ফায়ারবেসে হালনাগাদ করা হয়েছে!'
+            : 'Password updated successfully and synced to Firebase!';
+        setPassSuccess(msg);
+        setCurrPass('');
+        setNewPass('');
+        setConfirmPass('');
+        if (onPasswordUpdated) onPasswordUpdated(msg);
+        setTimeout(() => {
+          setShowChangePasswordModal(false);
+          setPassSuccess(null);
+        }, 1200);
+      }
+    } catch (err: any) {
+      setPassErr(
+        err?.message ||
+          (language === 'bn'
+            ? 'ফায়ারবেসে পাসওয়ার্ড হালনাগাদ করতে সমস্যা হয়েছে।'
+            : 'Error updating password in Firebase.')
+      );
+    } finally {
+      setIsUpdatingPass(false);
     }
   };
 
@@ -305,6 +401,25 @@ export const Header: React.FC<HeaderProps> = ({
                           </div>
                         )}
                       </div>
+
+                      {canChangeAdminPassword && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowUserMenu(false);
+                            setPassErr(null);
+                            setPassSuccess(null);
+                            setCurrPass('');
+                            setNewPass('');
+                            setConfirmPass('');
+                            setShowChangePasswordModal(true);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-xl transition-colors cursor-pointer"
+                        >
+                          <Key className="w-3.5 h-3.5" />
+                          <span>{language === 'bn' ? 'পাসওয়ার্ড পরিবর্তন' : 'Change Password'}</span>
+                        </button>
+                      )}
 
                       {onLogout && (
                         <button
@@ -617,6 +732,125 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   {isAuthenticating && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                   <span>{language === 'bn' ? 'লগইন করুন' : 'Sign In'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Self-Service Admin Password Change Modal (Syncs to Firebase) */}
+      {showChangePasswordModal && canChangeAdminPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 flex items-center justify-center">
+                  <Key className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    {language === 'bn' ? 'অ্যাডমিন পাসওয়ার্ড পরিবর্তন' : 'Change Admin Password'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-mono truncate max-w-[240px]">
+                    {currentUser.email || currentUser.displayName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowChangePasswordModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {passErr && (
+              <div className="mt-3 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/60 text-xs text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{passErr}</span>
+              </div>
+            )}
+
+            {passSuccess && (
+              <div className="mt-3 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{passSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleHeaderPasswordChangeSubmit} className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'বর্তমান পাসওয়ার্ড' : 'Current Password'}
+                </label>
+                <input
+                  type={showChangePassFields ? 'text' : 'password'}
+                  required
+                  value={currPass}
+                  onChange={(e) => setCurrPass(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'নতুন পাসওয়ার্ড' : 'New Password'}
+                </label>
+                <input
+                  type={showChangePassFields ? 'text' : 'password'}
+                  required
+                  minLength={4}
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'নতুন পাসওয়ার্ড নিশ্চিত করুন' : 'Confirm New Password'}
+                </label>
+                <input
+                  type={showChangePassFields ? 'text' : 'password'}
+                  required
+                  minLength={4}
+                  value={confirmPass}
+                  onChange={(e) => setConfirmPass(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showChangePassFields}
+                  onChange={(e) => setShowChangePassFields(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                <span>{language === 'bn' ? 'পাসওয়ার্ড দেখুন' : 'Show passwords'}</span>
+              </label>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordModal(false)}
+                  disabled={isUpdatingPass}
+                  className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 cursor-pointer"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPass}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isUpdatingPass ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>{language === 'bn' ? 'ফায়ারবেসে আপডেট করুন' : 'Update Password'}</span>
                 </button>
               </div>
             </form>

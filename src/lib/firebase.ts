@@ -1,10 +1,11 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
 import {
   getAuth,
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  updatePassword,
   GoogleAuthProvider,
   onAuthStateChanged,
   signOut,
@@ -231,6 +232,73 @@ export const firebaseRegisterAdmin = async (
       return null;
     }
     throw error;
+  }
+};
+
+// Provision a secondary Firebase Auth user without disturbing the Main Admin's active session
+export const provisionSecondaryAuthUser = async (
+  email: string,
+  pass: string,
+  displayName: string
+): Promise<{ uid?: string; errorCode?: string }> => {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanPass = (pass || '').trim();
+  if (!cleanEmail || cleanPass.length < 6) {
+    return {};
+  }
+  const secondaryAppName = `secondary-provision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  let secondaryApp: ReturnType<typeof initializeApp> | null = null;
+  try {
+    secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+    const secAuth = getAuth(secondaryApp);
+    const cred = await createUserWithEmailAndPassword(secAuth, cleanEmail, cleanPass);
+    try {
+      await updateProfile(cred.user, { displayName });
+    } catch {
+      // Ignore displayName update error
+    }
+    const uid = cred.user.uid;
+    await signOut(secAuth).catch(() => {});
+    return { uid };
+  } catch (error: any) {
+    const code = error?.code || '';
+    if (
+      code !== 'auth/operation-not-allowed' &&
+      code !== 'auth/email-already-in-use'
+    ) {
+      console.warn('Secondary Firebase Auth provision notice:', code || error?.message);
+    }
+    return { errorCode: code };
+  } finally {
+    if (secondaryApp) {
+      await deleteApp(secondaryApp).catch(() => {});
+    }
+  }
+};
+
+// Update the currently signed-in Firebase Auth user's password if their email matches
+export const firebaseUpdateUserPassword = async (
+  newPassword: string,
+  expectedEmail?: string
+): Promise<boolean> => {
+  const cleanPass = (newPassword || '').trim();
+  if (cleanPass.length < 6) return false;
+  try {
+    const current = auth.currentUser;
+    if (!current) return false;
+    if (
+      expectedEmail &&
+      current.email &&
+      current.email.toLowerCase().trim() !== expectedEmail.toLowerCase().trim()
+    ) {
+      return false;
+    }
+    await updatePassword(current, cleanPass);
+    return true;
+  } catch (error: any) {
+    // auth/requires-recent-login or provider mismatch is handled gracefully since Firestore holds canonical credential
+    console.warn('Firebase Auth updatePassword notice:', error?.code || error?.message);
+    return false;
   }
 };
 

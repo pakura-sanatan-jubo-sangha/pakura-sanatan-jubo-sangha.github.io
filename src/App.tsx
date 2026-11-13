@@ -10,7 +10,7 @@ import {
   MeetingAttendee,
   WithdrawalSource,
 } from './types';
-import { StorageService, MAIN_ADMIN_EMAIL } from './lib/storage';
+import { StorageService, MAIN_ADMIN_EMAIL, isStrictMainAdmin } from './lib/storage';
 import { GoogleSheetsService, syncViaAppsScriptWebhook } from './lib/sheetsService';
 import { getAccessToken, initAuth } from './lib/firebase';
 import { FirebaseSyncService } from './lib/firebaseSync';
@@ -120,11 +120,7 @@ export default function App() {
 
   const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
   const isMember = currentUser.role === 'member' && !isViewOnly;
-  const isAuthorizedMainAdmin =
-    currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-    currentUser.isMainAdmin === true ||
-    currentUser.userId === 'USR-MAIN-ADMIN' ||
-    currentUser.userId === 'USR-000001';
+  const isAuthorizedMainAdmin = isStrictMainAdmin(currentUser);
   const isAdmin = currentUser.role === 'admin' || isAuthorizedMainAdmin;
 
   // Public vs Private Interface separation:
@@ -245,11 +241,7 @@ export default function App() {
   };
 
   const t = getTranslation(language);
-  const isMainAdmin =
-    isAdmin &&
-    (currentUser.isMainAdmin === true ||
-      currentUser.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' ||
-      currentUser.userId === 'USR-000001');
+  const isMainAdmin = isStrictMainAdmin(currentUser);
 
   // 2. Sync Theme (Day / Night mode) with HTML Root
   useEffect(() => {
@@ -504,8 +496,16 @@ export default function App() {
     }
   };
 
-  const handleClearActivityLogs = () => {
-    const res = StorageService.clearAllActivityLogs(currentUser);
+  const handleClearActivityLogs = async () => {
+    if (!isStrictMainAdmin(currentUser)) {
+      showToast(
+        language === 'bn'
+          ? '⚠️ শুধুমাত্র প্রধান অ্যাডমিন অডিট লগ মুছে ফেলতে পারেন!'
+          : '⚠️ Only the Main Admin can clear audit logs!'
+      );
+      return;
+    }
+    const res = await StorageService.clearAllActivityLogsWithFirebase(currentUser);
     if (res.success) {
       setAppData(res.data);
       showToast(res.message);
@@ -532,10 +532,7 @@ export default function App() {
       }
       // 2. Direct Google Sheets API (if main admin is active)
       if (sheetId) {
-        const isMainAdminModifier =
-          currentUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-          (currentUser.role === 'admin' && currentUser.isMainAdmin === true);
-        if (isMainAdminModifier) {
+        if (isStrictMainAdmin(currentUser)) {
           await GoogleSheetsService.syncAllToGoogleSheets(sheetId, updatedData).catch(() => {});
         }
       }
@@ -1082,19 +1079,55 @@ export default function App() {
     }
   };
 
-  const handleAddUser = (email: string, displayName: string, role: any, tempPassword?: string) => {
-    const updated = StorageService.addUser(email, displayName, role, tempPassword, currentUser);
-    setAppData(updated);
-    showToast(
-      language === 'bn'
-        ? `${displayName} (${email})-কে ${role === 'admin' ? 'সহকারী অ্যাডমিন' : 'সদস্য'} হিসেবে যুক্ত করা হয়েছে!`
-        : `Added ${displayName} (${email}) as ${role}!`
+  const handleAddUser = async (email: string, displayName: string, role: any, tempPassword?: string) => {
+    if (!isStrictMainAdmin(currentUser)) {
+      showToast(
+        language === 'bn'
+          ? '⚠️ শুধুমাত্র প্রধান অ্যাডমিন নতুন অ্যাডমিন যোগ করতে পারবেন!'
+          : '⚠️ Only the Main Admin is permitted to add admins!'
+      );
+      return;
+    }
+    const res = await StorageService.addUserWithFirebaseSync(
+      email,
+      displayName,
+      role,
+      tempPassword,
+      currentUser
     );
+    setAppData(res.data);
+    if (res.success) {
+      showToast(
+        language === 'bn'
+          ? `${displayName} (${email})-কে ${role === 'admin' ? 'সহকারী অ্যাডমিন' : 'সদস্য'} হিসেবে যুক্ত করা হয়েছে এবং ফায়ারবেসে রেকর্ড সংরক্ষিত হয়েছে!`
+          : `Added ${displayName} (${email}) as ${role} and synced to Firebase!`
+      );
+      triggerAutoSaveToGoogleSheets(res.data);
+    } else {
+      showToast(`⚠️ ${res.message}`);
+    }
   };
 
-  const handleUpdateUserRole = (userId: string, newRole: any) => {
-    const updated = StorageService.updateUserRole(userId, newRole);
+  const handleUpdateUserRole = (userId: string, newRole: any, status: 'active' | 'inactive' = 'active') => {
+    if (!isStrictMainAdmin(currentUser)) {
+      showToast(
+        language === 'bn'
+          ? '⚠️ শুধুমাত্র প্রধান অ্যাডমিন অ্যাডমিনদের রোল বা স্ট্যাটাস পরিবর্তন করতে পারবেন!'
+          : '⚠️ Only the Main Admin can modify user roles!'
+      );
+      return;
+    }
+    const updated = StorageService.updateUserRole(userId, newRole, status, currentUser);
     setAppData(updated);
+    triggerAutoSaveToGoogleSheets(updated);
+  };
+
+  const handlePasswordUpdatedRefresh = (message?: string) => {
+    setCurrentUser(StorageService.getCurrentUser());
+    setAppData(StorageService.getAppData());
+    if (message) {
+      showToast(message);
+    }
   };
 
   // Metrics computation for dashboard & reports
@@ -1187,6 +1220,7 @@ export default function App() {
         onMarkNotificationRead={handleMarkNotificationRead}
         onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
         onNavigateTab={(tab) => setCurrentTab(tab)}
+        onPasswordUpdated={handlePasswordUpdatedRefresh}
       />
 
       {/* Main Workspace Layout */}
@@ -1627,6 +1661,7 @@ export default function App() {
               onCreateMeeting={handleCreateMeeting}
               onRecordAttendance={handleRecordMeetingAttendance}
               onDeleteMeeting={handleDeleteMeeting}
+              onPasswordUpdated={handlePasswordUpdatedRefresh}
             />
           )}
 
@@ -1667,6 +1702,7 @@ export default function App() {
                 onResetDatabase={handleResetDatabase}
                 onExportJson={handleExportJson}
                 onImportJson={handleImportJson}
+                onPasswordUpdated={handlePasswordUpdatedRefresh}
               />
             ) : (
               <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center max-w-md mx-auto my-8 shadow-xs">

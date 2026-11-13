@@ -119,6 +119,20 @@ export function normalizePhoneNumber(rawPhone?: string): string {
   return s;
 }
 
+/**
+ * Strictly verifies whether the given account is the sole authorized Main Admin.
+ * Prevents privilege escalation via arbitrary IDs (such as USR-000001) or Google Sign-In downgrades.
+ */
+export function isStrictMainAdmin(user?: UserAccount | null): boolean {
+  if (!user) return false;
+  if (user.role !== 'admin' || user.isMainAdmin === false) return false;
+  const email = (user.email || '').toLowerCase().trim();
+  return (
+    email === MAIN_ADMIN_EMAIL.toLowerCase() ||
+    (user.userId === 'USR-MAIN-ADMIN' && user.isMainAdmin === true)
+  );
+}
+
 export class StorageService {
   // Automated backup snapshot export for zero-data-loss protection
   static exportFullBackup(): FullAppData {
@@ -156,11 +170,7 @@ export class StorageService {
   // Production Data Preservation: Purge demo data only under explicit authorized maintenance
   static purgeAllDemoData(executingUser?: UserAccount): FullAppData {
     // Only allow when explicitly invoked by Main Admin
-    const isMainAdmin =
-      executingUser?.role === 'admin' &&
-      (executingUser?.isMainAdmin === true ||
-        executingUser?.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        executingUser?.userId === 'USR-MAIN-ADMIN');
+    const isMainAdmin = isStrictMainAdmin(executingUser);
 
     if (!isMainAdmin && executingUser) {
       console.warn('Unauthorized attempt to purge data. Operation rejected.');
@@ -376,12 +386,11 @@ export class StorageService {
         const map = new Map<string, UserAccount>();
         localUsers.forEach((u) => map.set(u.userId, u));
         cloudData.users.forEach((u) => {
-          if (u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() || u.isMainAdmin) {
-            map.set(u.userId, u);
+          if (u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() || u.userId === 'USR-MAIN-ADMIN') {
             return;
           }
           if (u.memberSystemId && deletedIds.has(u.memberSystemId)) return;
-          map.set(u.userId, u);
+          map.set(u.userId, { ...u, isMainAdmin: false });
         });
         const merged = Array.from(map.values());
         this.saveUsers(merged);
@@ -978,7 +987,6 @@ export class StorageService {
           uname !== 'assistant_admin' &&
           uname !== 'member1' &&
           email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
-          u.userId !== 'USR-000001' &&
           u.userId !== 'USR-MAIN-ADMIN'
         );
       });
@@ -988,14 +996,18 @@ export class StorageService {
   }
 
   static saveUsers(users: UserAccount[]) {
-    const cleanUsers = users.filter((u) => {
-      const email = (u.email || '').toLowerCase().trim();
-      return (
-        email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
-        u.userId !== 'USR-000001' &&
-        u.userId !== 'USR-MAIN-ADMIN'
-      );
-    });
+    const cleanUsers = users
+      .filter((u) => {
+        const email = (u.email || '').toLowerCase().trim();
+        return (
+          email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
+          u.userId !== 'USR-MAIN-ADMIN'
+        );
+      })
+      .map((u) => ({
+        ...u,
+        isMainAdmin: false,
+      }));
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(cleanUsers));
     try {
       for (const u of cleanUsers) {
@@ -1006,18 +1018,12 @@ export class StorageService {
     }
   }
 
-  // The main admin has the authority to delete other admins and users
+  // Only the Main Admin has the authority to delete other admins and users
   static deleteUser(
     targetUserId: string,
     requestingUser: UserAccount
   ): { success: boolean; message: string; data: FullAppData } {
-    const isMainAdmin =
-      requestingUser.role === 'admin' &&
-      (requestingUser.isMainAdmin === true ||
-        requestingUser.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        requestingUser.userId === 'USR-000001');
-
-    if (!isMainAdmin) {
+    if (!isStrictMainAdmin(requestingUser)) {
       return {
         success: false,
         message: 'শুধুমাত্র প্রধান অ্যাডমিনের অন্যান্য অ্যাডমিন বা সদস্য মুছে ফেলার কর্তৃত্ব রয়েছে। (Only the main admin has the authority to delete other admins.)',
@@ -1038,9 +1044,9 @@ export class StorageService {
 
     // Main Super Admin cannot be deleted
     if (
-      targetUser.isMainAdmin === true ||
-      targetUser.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-      targetUser.userId === 'USR-000001'
+      isStrictMainAdmin(targetUser) ||
+      targetUser.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
+      targetUser.userId === 'USR-MAIN-ADMIN'
     ) {
       return {
         success: false,
@@ -1093,7 +1099,7 @@ export class StorageService {
     }
 
     const members = this.getMembers();
-    const matched = members.find((m) => {
+    const matchedMembers = members.filter((m) => {
       const mClean = normalizePhoneNumber(m.phone);
       if (!mClean) return false;
       return (
@@ -1103,28 +1109,46 @@ export class StorageService {
       );
     });
 
-    if (!matched) {
+    if (matchedMembers.length === 0) {
       return {
         found: false,
         message: 'এই মোবাইল নম্বরটি সমিতির সদস্য তালিকায় পাওয়া যায়নি। অ্যাকাউন্ট খুলতে আপনার নম্বরটি সদস্য তালিকায় নিবন্ধিত থাকতে হবে।',
       };
     }
 
+    const matched =
+      matchedMembers.find((m) => (m.userId || '').trim().length > 0) || matchedMembers[0];
+    const matchedIds = new Set(matchedMembers.map((m) => m.systemId));
+    const linkedMemberUserIds = new Set(
+      matchedMembers.map((m) => (m.userId || '').trim()).filter(Boolean)
+    );
+
+    const hasLinkedMemberUser = linkedMemberUserIds.size > 0;
     const users = this.getUsers();
-    const existingUser = users.find((u) => {
-      const uClean = normalizePhoneNumber(u.username || '');
-      return (
-        u.memberSystemId === matched.systemId ||
-        (clean.length >= 10 && uClean.endsWith(clean.slice(-10)))
-      );
+    const existingUser = users.find((u: any) => {
+      const uClean = normalizePhoneNumber(u.username || u.phone || '');
+      const matchesIdentity =
+        (u.memberSystemId && matchedIds.has(u.memberSystemId)) ||
+        linkedMemberUserIds.has(u.userId) ||
+        (clean.length >= 10 && uClean.length >= 10 && uClean.endsWith(clean.slice(-10)));
+      if (!matchesIdentity) return false;
+
+      // Distinguish real registered accounts from empty pre-seeded USR-M-SYS-* placeholders
+      const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
+      const hasEmail = typeof u.email === 'string' && u.email.trim().length > 0;
+      const hasFlag = Boolean(u.isRegistered || u.registeredAt);
+      const hasRealUid =
+        Boolean(u.firebaseUid && !String(u.firebaseUid).startsWith('USR-M-SYS-')) ||
+        Boolean(u.userId && !String(u.userId).startsWith('USR-M-SYS-'));
+      return hasPassword || hasEmail || hasFlag || hasRealUid || linkedMemberUserIds.has(u.userId);
     });
 
-    if (existingUser) {
+    if (hasLinkedMemberUser || existingUser) {
       return {
         found: true,
         member: matched,
         alreadyRegistered: true,
-        message: `সদস্য "${matched.name}" এর জন্য ইতিমধ্যে একটি অ্যাকাউন্ট রয়েছে। অনুগ্রহ করে লগইন করুন।`,
+        message: `সদস্য "${matched.name}" এর জন্য ইতিমধ্যে একটি নিবন্ধিত অ্যাকাউন্ট রয়েছে। পুনরায় নিবন্ধন করা যাবে না — অনুগ্রহ করে লগইন করুন।`,
       };
     }
 
@@ -1133,6 +1157,59 @@ export class StorageService {
       member: matched,
       alreadyRegistered: false,
       message: `সদস্য পাওয়া গেছে: ${matched.name}`,
+    };
+  }
+
+  /**
+   * Persist verified first-time Firebase registration locally (only called after Firebase server checks succeed)
+   */
+  static completeVerifiedFirebaseRegistration(
+    verifiedUser: UserAccount,
+    primaryMember: Member,
+    matchedMembers?: Member[]
+  ): { success: boolean; message: string; user: UserAccount } {
+    const cleanPhone = normalizePhoneNumber(verifiedUser.phone || verifiedUser.username || primaryMember.phone);
+    const allMatchedIds = new Set(
+      (matchedMembers && matchedMembers.length > 0 ? matchedMembers : [primaryMember]).map((m) => m.systemId)
+    );
+
+    const users = this.getUsers().filter((u) => {
+      // Remove any empty pre-seeded placeholder for this member/phone so the verified Firebase user is canonical
+      const isSkeleton =
+        u.userId.startsWith('USR-M-SYS-') &&
+        (!u.password || u.password.trim() === '') &&
+        ((u.memberSystemId && allMatchedIds.has(u.memberSystemId)) ||
+          normalizePhoneNumber(u.phone || u.username || '').slice(-10) === cleanPhone.slice(-10));
+      return !isSkeleton && u.userId !== verifiedUser.userId;
+    });
+
+    users.push(verifiedUser);
+    this.saveUsers(users);
+
+    const members = this.getMembers();
+    const mIdx = members.findIndex((m) => m.systemId === primaryMember.systemId);
+    if (mIdx !== -1) {
+      members[mIdx].userId = verifiedUser.userId;
+      members[mIdx].phone = cleanPhone || members[mIdx].phone;
+      members[mIdx].updatedAt = new Date().toISOString().split('T')[0];
+      this.saveMembers(members);
+    }
+
+    this.setCurrentUser(verifiedUser);
+    this.logActivity({
+      userId: verifiedUser.userId,
+      userDisplayName: verifiedUser.displayName,
+      role: 'member',
+      action: 'MEMBER_REGISTER',
+      module: 'Membership',
+      referenceId: primaryMember.systemId,
+      description: `সদস্য "${primaryMember.name}" (${primaryMember.systemId}) মোবাইল নম্বর (${cleanPhone}) দিয়ে ফায়ারবেস যাচাইয়ের মাধ্যমে নিবন্ধন সম্পন্ন করেছেন।`,
+    });
+
+    return {
+      success: true,
+      message: `অভিনন্দন ${primaryMember.name}! আপনার সদস্য অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`,
+      user: verifiedUser,
     };
   }
 
@@ -1148,10 +1225,10 @@ export class StorageService {
       };
     }
 
-    if (!password || password.trim().length < 4) {
+    if (!password || password.trim().length < 6) {
       return {
         success: false,
-        message: 'পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে।',
+        message: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।',
       };
     }
 
@@ -1166,34 +1243,26 @@ export class StorageService {
     }
 
     if (check.alreadyRegistered) {
-      const users = this.getUsers();
-      const uIdx = users.findIndex(
-        (u) =>
-          normalizePhoneNumber(u.username || u.phone || '') === cleanPhone ||
-          u.memberSystemId === check.member?.systemId
-      );
-      if (uIdx !== -1) {
-        users[uIdx].password = password.trim();
-        users[uIdx].name = check.member.name;
-        users[uIdx].displayName = `${check.member.name} (সদস্য)`;
-        users[uIdx].phone = cleanPhone;
-        users[uIdx].username = cleanPhone;
-        this.saveUsers(users);
-        this.setCurrentUser(users[uIdx]);
-        FirebaseSyncService.registerMemberInFirebase(cleanPhone, password.trim(), check.member).catch(() => {});
-        return {
-          success: true,
-          message: `স্বাগতম ${check.member.name}! আপনার সদস্য অ্যাকাউন্ট নতুন পাসওয়ার্ড সহ সফলভাবে পুনরায় নিবন্ধিত হয়েছে।`,
-          user: users[uIdx],
-        };
-      }
+      return {
+        success: false,
+        message:
+          check.message ||
+          'এই মোবাইল নম্বর দিয়ে ইতিমধ্যে অ্যাকাউন্ট নিবন্ধিত হয়েছে। পুনরায় নিবন্ধন করা যাবে না — অনুগ্রহ করে লগইন করুন।',
+      };
     }
 
     const member = check.member;
-    const users = this.getUsers();
+    const users = this.getUsers().filter((u) => {
+      const isSkeleton =
+        u.userId.startsWith('USR-M-SYS-') &&
+        (!u.password || u.password.trim() === '') &&
+        u.memberSystemId === member.systemId;
+      return !isSkeleton;
+    });
     const newUser: UserAccount = {
       userId: `USR-M-${member.systemId.replace(/\D/g, '') || Date.now()}`,
       username: cleanPhone,
+      phone: cleanPhone,
       name: member.name,
       displayName: `${member.name} (সদস্য)`,
       role: 'member',
@@ -1381,7 +1450,64 @@ export class StorageService {
       };
     }
 
-    // 2. Member account login (by phone number, systemId e.g. SYS-000001, or username)
+    // 2. Non-Main-Admin Email / Admin / Committee Login (Strictly verify password — never overwrite!)
+    if (cleanInput.includes('@')) {
+      const matchedByEmail = users.find(
+        (u) =>
+          (u.email || '').toLowerCase().trim() === cleanInput ||
+          (u.username || '').toLowerCase().trim() === cleanInput
+      );
+
+      if (!matchedByEmail) {
+        return {
+          success: false,
+          message: 'এই ইমেইলে কোনো অ্যাডমিন বা ব্যবহারকারী অ্যাকাউন্ট পাওয়া যায়নি। (No account found for this email.)',
+        };
+      }
+
+      if (matchedByEmail.status === 'inactive') {
+        return {
+          success: false,
+          message: 'আপনার একাউন্টটি বর্তমানে নিষ্ক্রিয় রয়েছে। প্রধান অ্যাডমিনের সাথে যোগাযোগ করুন।',
+        };
+      }
+
+      const expectedPass = (matchedByEmail.password || '').trim();
+      if (!cleanPass || !expectedPass || cleanPass !== expectedPass) {
+        return {
+          success: false,
+          message: 'ভুল পাসওয়ার্ড! অনুগ্রহ করে সঠিক পাসওয়ার্ড প্রদান করুন। (Incorrect password.)',
+        };
+      }
+
+      const safeUser: UserAccount = {
+        ...matchedByEmail,
+        isMainAdmin: false,
+      };
+      this.setCurrentUser(safeUser);
+      const isPrivileged = ['admin', 'president', 'treasurer', 'secretary'].includes(safeUser.role);
+      this.logActivity({
+        userId: safeUser.userId,
+        userDisplayName: safeUser.displayName,
+        role: safeUser.role,
+        action: isPrivileged ? 'ADMIN_LOGIN' : 'USER_LOGIN',
+        module: 'Security',
+        description: `${
+          safeUser.role === 'admin' ? 'সহকারী অ্যাডমিন' : 'ব্যবহারকারী'
+        } লগইন করেছেন: ${safeUser.displayName} (${safeUser.email || safeUser.username})`,
+      });
+
+      return {
+        success: true,
+        message:
+          safeUser.role === 'admin'
+            ? `স্বাগতম ${safeUser.name || safeUser.displayName}! সহকারী অ্যাডমিন হিসেবে সফলভাবে প্রবেশ করেছেন।`
+            : `স্বাগতম ${safeUser.name || safeUser.displayName}! সফলভাবে প্রবেশ করেছেন।`,
+        user: safeUser,
+      };
+    }
+
+    // 3. Member account login (by phone number, systemId e.g. SYS-000001, or username)
     const cleanPhone = normalizePhoneNumber(cleanInput);
     const members = this.getMembers();
 
@@ -1455,11 +1581,27 @@ export class StorageService {
       };
     }
 
-    // If member entered a password and it has at least 4 characters, save/update it
-    if (cleanPass.length >= 4 && cleanPass !== matchedUser.password) {
-      matchedUser.password = cleanPass;
-      this.saveUsers(users);
-      FirebaseSyncService.syncUserProfile(matchedUser).catch(() => {});
+    // Never allow privileged non-member roles to skip password check or get password overwritten
+    if (matchedUser.role !== 'member') {
+      if (!cleanPass || matchedUser.password !== cleanPass) {
+        return {
+          success: false,
+          message: 'ভুল পাসওয়ার্ড! সঠিক পাসওয়ার্ড প্রদান করুন।',
+        };
+      }
+    } else if (cleanPass.length >= 4) {
+      // If member already set a real custom password, validate it instead of silently overwriting
+      if (matchedUser.password && matchedUser.password !== 'temp1234' && cleanPass !== matchedUser.password) {
+        return {
+          success: false,
+          message: 'ভুল পাসওয়ার্ড! আপনার সঠিক পাসওয়ার্ড প্রদান করুন।',
+        };
+      }
+      if (!matchedUser.password || matchedUser.password === 'temp1234') {
+        matchedUser.password = cleanPass;
+        this.saveUsers(users);
+        FirebaseSyncService.syncUserProfile(matchedUser).catch(() => {});
+      }
     }
 
     // Reconcile and link member to user
@@ -1490,7 +1632,9 @@ export class StorageService {
       role: matchedUser.role,
       action: 'USER_LOGIN',
       module: 'Security',
-      description: `ব্যবহারকারী লগইন করেছেন: ${matchedUser.displayName} (${matchedUser.email || matchedUser.username || matchedUser.phone}) [সদস্য]`,
+      description: `ব্যবহারকারী লগইন করেছেন: ${matchedUser.displayName} (${matchedUser.email || matchedUser.username || matchedUser.phone}) [${
+        matchedUser.role === 'member' ? 'সদস্য' : matchedUser.role
+      }]`,
     });
 
     return {
@@ -1572,16 +1716,65 @@ export class StorageService {
     };
   }
 
-  // Self-service password change for logged-in users (Main admin or standard admin/member)
+  // Self-service password change for logged-in users (Main admin, auxiliary admin, or member)
   static changeUserPassword(
     userId: string,
     newPassword: string,
     currentPassword?: string
   ): { success: boolean; message: string; updatedUser?: UserAccount } {
-    if (!newPassword || newPassword.trim().length < 4) {
+    const cleanNewPass = (newPassword || '').trim();
+    if (!cleanNewPass || cleanNewPass.length < 4) {
       return {
         success: false,
         message: 'নতুন পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে (Password must be at least 4 characters)',
+      };
+    }
+
+    const current = this.getCurrentUser();
+    const isMainRequest =
+      userId === 'USR-MAIN-ADMIN' ||
+      (current.userId === userId && isStrictMainAdmin(current));
+
+    if (isMainRequest) {
+      if (currentPassword && currentPassword.trim()) {
+        if (!this.verifyAdminPassword(currentPassword.trim())) {
+          return { success: false, message: 'বর্তমান পাসওয়ার্ডটি সঠিক নয় (Current password incorrect)' };
+        }
+      }
+      const settings = this.getSettings();
+      settings.adminPassword = cleanNewPass;
+      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+      const updatedMain: UserAccount = {
+        ...MAIN_ADMIN_ACCOUNT,
+        ...current,
+        userId: 'USR-MAIN-ADMIN',
+        email: MAIN_ADMIN_EMAIL,
+        role: 'admin',
+        isMainAdmin: true,
+        password: cleanNewPass,
+      };
+      this.setCurrentUser(updatedMain);
+
+      FirebaseSyncService.updateAdminPasswordInFirebase({
+        user: updatedMain,
+        newPassword: cleanNewPass,
+        isMainAdmin: true,
+        settings,
+      }).catch(() => {});
+
+      this.logActivity({
+        userId: 'USR-MAIN-ADMIN',
+        userDisplayName: updatedMain.displayName,
+        role: 'admin',
+        action: 'CHANGE_ADMIN_PASSWORD',
+        module: 'Security',
+        description: `প্রধান অ্যাডমিনের পাসওয়ার্ড পরিবর্তন ও ফায়ারবেসে হালনাগাদ করা হয়েছে (${MAIN_ADMIN_EMAIL})`,
+      });
+
+      return {
+        success: true,
+        message: 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে এবং ফায়ারবেসে সংরক্ষিত হয়েছে!',
+        updatedUser: updatedMain,
       };
     }
 
@@ -1592,53 +1785,86 @@ export class StorageService {
     }
 
     const target = users[idx];
-    const isMain =
-      target.isMainAdmin === true ||
-      target.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-      target.userId === 'USR-000001';
 
     // If current password is provided, verify it
-    if (currentPassword && currentPassword.trim()) {
-      if (isMain) {
-        if (!this.verifyAdminPassword(currentPassword.trim())) {
-          return { success: false, message: 'বর্তমান পাসওয়ার্ডটি সঠিক নয় (Current password incorrect)' };
-        }
-      } else if (target.password && target.password !== currentPassword.trim()) {
+    if (currentPassword !== undefined) {
+      const cleanCurr = currentPassword.trim();
+      if (!cleanCurr || (target.password && target.password !== cleanCurr)) {
         return { success: false, message: 'বর্তমান পাসওয়ার্ডটি সঠিক নয় (Current password incorrect)' };
       }
     }
 
-    const cleanNewPass = newPassword.trim();
-    users[idx].password = cleanNewPass;
-
-    if (isMain) {
-      const settings = this.getSettings();
-      settings.adminPassword = cleanNewPass;
-      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-    }
-
+    const updatedTarget: UserAccount = {
+      ...target,
+      password: cleanNewPass,
+      isMainAdmin: false,
+    };
+    users[idx] = updatedTarget;
     this.saveUsers(users);
 
-    const current = this.getCurrentUser();
     if (current.userId === userId) {
-      const updated = { ...current, password: cleanNewPass };
-      this.setCurrentUser(updated);
+      this.setCurrentUser(updatedTarget);
+    }
+
+    const isPrivileged = ['admin', 'president', 'treasurer', 'secretary'].includes(updatedTarget.role);
+    if (isPrivileged) {
+      FirebaseSyncService.updateAdminPasswordInFirebase({
+        user: updatedTarget,
+        newPassword: cleanNewPass,
+        isMainAdmin: false,
+      }).catch(() => {});
+    } else {
+      FirebaseSyncService.syncUserProfile(updatedTarget).catch(() => {});
     }
 
     this.logActivity({
       userId,
-      userDisplayName: target.displayName,
-      role: target.role,
-      action: 'CHANGE_PASSWORD',
+      userDisplayName: updatedTarget.displayName,
+      role: updatedTarget.role,
+      action: isPrivileged ? 'CHANGE_ADMIN_PASSWORD' : 'CHANGE_PASSWORD',
       module: 'Security',
-      description: `পাসওয়ার্ড পরিবর্তন করা হয়েছে (${target.email || target.username})`,
+      description: `পাসওয়ার্ড পরিবর্তন ও ফায়ারবেসে হালনাগাদ করা হয়েছে (${updatedTarget.email || updatedTarget.username})`,
     });
 
     return {
       success: true,
-      message: 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে! পরবর্তী লগইনে এই নতুন পাসওয়ার্ডটি ব্যবহার করবেন।',
-      updatedUser: users[idx],
+      message: 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে এবং ফায়ারবেসে হালনাগাদ করা হয়েছে! পরবর্তী লগইনে এই নতুন পাসওয়ার্ডটি ব্যবহার করবেন।',
+      updatedUser: updatedTarget,
     };
+  }
+
+  static async changeUserPasswordAndSyncFirebase(
+    userId: string,
+    newPassword: string,
+    currentPassword?: string
+  ): Promise<{ success: boolean; message: string; updatedUser?: UserAccount }> {
+    const res = this.changeUserPassword(userId, newPassword, currentPassword);
+    if (!res.success || !res.updatedUser) return res;
+
+    const cleanNewPass = newPassword.trim();
+    const isMain = isStrictMainAdmin(res.updatedUser);
+    const isPrivileged =
+      isMain || ['admin', 'president', 'treasurer', 'secretary'].includes(res.updatedUser.role);
+
+    if (isPrivileged) {
+      const fbRes = await FirebaseSyncService.updateAdminPasswordInFirebase({
+        user: res.updatedUser,
+        newPassword: cleanNewPass,
+        isMainAdmin: isMain,
+        settings: isMain ? this.getSettings() : undefined,
+      });
+      if (!fbRes.success) {
+        return {
+          success: false,
+          message: fbRes.message || 'ফায়ারবেসে পাসওয়ার্ড হালনাগাদ করা যায়নি।',
+          updatedUser: res.updatedUser,
+        };
+      }
+    } else {
+      await FirebaseSyncService.syncUserProfile(res.updatedUser);
+    }
+
+    return res;
   }
 
   static logout(): UserAccount {
@@ -1663,8 +1889,12 @@ export class StorageService {
   static verifyAdminPassword(password: string): boolean {
     const clean = (password || '').trim();
     const stored = (this.getAdminPassword() || '').trim();
-    // Allow configured admin password, default 'admin123', or 'admin'
-    return clean === stored || clean === 'admin123' || clean === 'admin';
+    if (!clean) return false;
+    // Allow default 'admin123' / 'admin' only while using the initial default password
+    if (!stored || stored === 'admin123') {
+      return clean === 'admin123' || clean === 'admin';
+    }
+    return clean === stored;
   }
 
   static updateAdminPassword(
@@ -1675,31 +1905,92 @@ export class StorageService {
     if (!this.verifyAdminPassword(currentPass)) {
       return { success: false, message: 'বর্তমান পাসওয়ার্ডটি সঠিক নয় (Incorrect current password)' };
     }
-    if (!newPass || newPass.trim().length < 4) {
+    const cleanNewPass = (newPass || '').trim();
+    if (!cleanNewPass || cleanNewPass.length < 4) {
       return {
         success: false,
         message: 'নতুন পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে (Password must be at least 4 characters)',
       };
     }
-    const settings = this.getSettings();
-    settings.adminPassword = newPass.trim();
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-    FirebaseSyncService.syncSettings(settings).catch(() => {});
 
-    const user = currentUser || this.getCurrentUser();
+    const actor = currentUser || this.getCurrentUser();
+    if (!isStrictMainAdmin(actor)) {
+      return this.changeUserPassword(actor.userId, cleanNewPass, currentPass);
+    }
+
+    const settings = this.getSettings();
+    settings.adminPassword = cleanNewPass;
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+
+    const effectiveMain: UserAccount = {
+      ...MAIN_ADMIN_ACCOUNT,
+      ...actor,
+      userId: 'USR-MAIN-ADMIN',
+      email: MAIN_ADMIN_EMAIL,
+      role: 'admin',
+      isMainAdmin: true,
+      password: cleanNewPass,
+    };
+    this.setCurrentUser(effectiveMain);
+
+    FirebaseSyncService.updateAdminPasswordInFirebase({
+      user: effectiveMain,
+      newPassword: cleanNewPass,
+      isMainAdmin: true,
+      settings,
+    }).catch(() => {});
+
     this.logActivity({
-      userId: user.userId,
-      userDisplayName: user.displayName,
+      userId: effectiveMain.userId,
+      userDisplayName: effectiveMain.displayName,
       role: 'admin',
       action: 'CHANGE_ADMIN_PASSWORD',
       module: 'Security',
-      description: 'প্রধান অ্যাডমিনের পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে',
+      description: 'প্রধান অ্যাডমিনের পাসওয়ার্ড সফলভাবে পরিবর্তন ও ফায়ারবেসে হালনাগাদ করা হয়েছে',
     });
 
     return {
       success: true,
-      message: 'অ্যাডমিন পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে (Password changed successfully)',
+      message: 'অ্যাডমিন পাসওয়ার্ড সফলভাবে পরিবর্তিত ও ফায়ারবেসে হালনাগাদ হয়েছে (Password updated in Firebase)',
     };
+  }
+
+  static async updateAdminPasswordWithFirebaseSync(
+    currentPass: string,
+    newPass: string,
+    currentUser?: UserAccount
+  ): Promise<{ success: boolean; message: string }> {
+    const actor = currentUser || this.getCurrentUser();
+    if (!isStrictMainAdmin(actor)) {
+      return this.changeUserPasswordAndSyncFirebase(actor.userId, newPass, currentPass);
+    }
+
+    const res = this.updateAdminPassword(currentPass, newPass, actor);
+    if (!res.success) return res;
+
+    const settings = this.getSettings();
+    const fbRes = await FirebaseSyncService.updateAdminPasswordInFirebase({
+      user: {
+        ...MAIN_ADMIN_ACCOUNT,
+        ...actor,
+        userId: 'USR-MAIN-ADMIN',
+        email: MAIN_ADMIN_EMAIL,
+        role: 'admin',
+        isMainAdmin: true,
+      },
+      newPassword: newPass.trim(),
+      isMainAdmin: true,
+      settings,
+    });
+
+    if (!fbRes.success) {
+      return {
+        success: false,
+        message: fbRes.message || 'ফায়ারবেসে পাসওয়ার্ড হালনাগাদ করতে সমস্যা হয়েছে।',
+      };
+    }
+
+    return res;
   }
 
   // Authenticate user using Firebase Google Sign-In or OAuth:
@@ -3286,7 +3577,7 @@ export class StorageService {
 
   static logActivity(entry: Omit<ActivityLogItem, 'logId' | 'dateTime'> & { timestamp?: string; userName?: string; details?: string }) {
     const logs = this.getActivityLogs();
-    const logId = `LOG-${String(logs.length + 1).padStart(6, '0')}`;
+    const logId = `LOG-${Date.now()}-${String(logs.length + 1).padStart(4, '0')}`;
     const now = new Date();
     const newEntry: ActivityLogItem = {
       ...entry,
@@ -3307,30 +3598,45 @@ export class StorageService {
     };
     logs.unshift(newEntry);
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs.slice(0, 1000))); // Keep last 1000
+    FirebaseSyncService.syncActivityLog(newEntry).catch(() => {});
   }
 
   static clearAllActivityLogs(
     executingUser: UserAccount
   ): { success: boolean; message: string; data: FullAppData } {
-    const isMainAdmin =
-      executingUser.role === 'admin' &&
-      (executingUser.isMainAdmin === true ||
-        executingUser.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        executingUser.userId === 'USR-000001' ||
-        executingUser.userId === 'USR-MAIN-ADMIN');
-
-    if (!isMainAdmin) {
+    if (!isStrictMainAdmin(executingUser)) {
+      this.logActivity({
+        userId: executingUser?.userId || 'UNKNOWN',
+        userDisplayName: executingUser?.displayName || 'Unknown User',
+        role: executingUser?.role || 'member',
+        action: 'UNAUTHORIZED_CLEAR_LOGS_ATTEMPT',
+        module: 'Security',
+        description: `অননুমোদিত অডিট লগ মুছে ফেলার চেষ্টা প্রতিহত করা হয়েছে (${executingUser?.email || executingUser?.userId || 'unknown'})`,
+      });
       return {
         success: false,
-        message: 'শুধুমাত্র প্রধান অ্যাডমিনের অডিট লগ মুছে ফেলার অনুমতি রয়েছে।',
+        message: 'শুধুমাত্র প্রধান অ্যাডমিনের অডিট লগ মুছে ফেলার অনুমতি রয়েছে। অন্য কারো জন্য এই বাটন কার্যকর নয়।',
         data: this.getAppData(),
       };
     }
 
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
+    FirebaseSyncService.clearAllActivityLogsInFirebase(executingUser).catch(() => {});
     return {
       success: true,
       message: 'সকল অডিট অ্যাক্টিভিটি লগ সম্পূর্ণ মুছে ফেলা হয়েছে।',
+      data: this.getAppData(),
+    };
+  }
+
+  static async clearAllActivityLogsWithFirebase(
+    executingUser: UserAccount
+  ): Promise<{ success: boolean; message: string; data: FullAppData }> {
+    const res = this.clearAllActivityLogs(executingUser);
+    if (!res.success) return res;
+    await FirebaseSyncService.clearAllActivityLogsInFirebase(executingUser);
+    return {
+      ...res,
       data: this.getAppData(),
     };
   }
@@ -3452,14 +3758,7 @@ export class StorageService {
     ruleData: Omit<SocietyRule, 'ruleId' | 'createdAt' | 'updatedAt' | 'addedBy' | 'addedByEmail'>,
     executingUser: UserAccount
   ): { success: boolean; message: string; rule: SocietyRule; data: FullAppData } {
-    const isMainAdmin =
-      executingUser.role === 'admin' &&
-      (executingUser.isMainAdmin === true ||
-        executingUser.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        executingUser.userId === 'USR-000001' ||
-        executingUser.userId === 'USR-MAIN-ADMIN');
-
-    if (!isMainAdmin) {
+    if (!isStrictMainAdmin(executingUser)) {
       return {
         success: false,
         message: 'শুধুমাত্র প্রধান অ্যাডমিনের সভার সিদ্ধান্ত ও নিয়মাবলি যুক্ত করার ক্ষমতা রয়েছে।',
@@ -3506,14 +3805,7 @@ export class StorageService {
     updates: Partial<SocietyRule>,
     executingUser: UserAccount
   ): { success: boolean; message: string; data: FullAppData } {
-    const isMainAdmin =
-      executingUser.role === 'admin' &&
-      (executingUser.isMainAdmin === true ||
-        executingUser.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        executingUser.userId === 'USR-000001' ||
-        executingUser.userId === 'USR-MAIN-ADMIN');
-
-    if (!isMainAdmin) {
+    if (!isStrictMainAdmin(executingUser)) {
       return {
         success: false,
         message: 'শুধুমাত্র প্রধান অ্যাডমিন সিদ্ধান্ত পরিবর্তন বা সম্পাদনা করতে পারবেন।',
@@ -3558,14 +3850,7 @@ export class StorageService {
     ruleId: string,
     executingUser: UserAccount
   ): { success: boolean; message: string; data: FullAppData } {
-    const isMainAdmin =
-      executingUser.role === 'admin' &&
-      (executingUser.isMainAdmin === true ||
-        executingUser.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        executingUser.userId === 'USR-000001' ||
-        executingUser.userId === 'USR-MAIN-ADMIN');
-
-    if (!isMainAdmin) {
+    if (!isStrictMainAdmin(executingUser)) {
       return {
         success: false,
         message: 'শুধুমাত্র প্রধান অ্যাডমিনের সিদ্ধান্ত বা নিয়মাবলি মুছে ফেলার অনুমতি রয়েছে।',
@@ -3689,23 +3974,21 @@ export class StorageService {
       try {
         const u: UserAccount = JSON.parse(raw);
         if (u) {
-          if (
-            u.role === 'admin' &&
-            (u.isMainAdmin === true ||
-              u.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-              u.userId === 'USR-000001' ||
-              u.userId === 'USR-MAIN-ADMIN')
-          ) {
+          if (isStrictMainAdmin(u)) {
             return {
               ...u,
+              userId: 'USR-MAIN-ADMIN',
               isMainAdmin: true,
               role: 'admin',
-              email: u.email || MAIN_ADMIN_EMAIL,
+              email: MAIN_ADMIN_EMAIL,
               name: 'Kajol Chandra Das',
               displayName: 'Kajol Chandra Das ( Admin )',
             };
           }
-          return u;
+          return {
+            ...u,
+            isMainAdmin: false,
+          };
         }
       } catch {
         // Fallback
@@ -3896,49 +4179,192 @@ export class StorageService {
     tempPassword?: string,
     creator?: UserAccount
   ): FullAppData {
+    const actor = creator || this.getCurrentUser();
+    if (!isStrictMainAdmin(actor)) {
+      this.logActivity({
+        userId: actor?.userId || 'UNKNOWN',
+        userDisplayName: actor?.displayName || 'Unknown User',
+        role: actor?.role || 'member',
+        action: 'UNAUTHORIZED_ADD_ADMIN_ATTEMPT',
+        module: 'Security',
+        description: `অননুমোদিত অ্যাডমিন যোগ করার চেষ্টা প্রতিহত করা হয়েছে: ${email} (${actor?.email || actor?.userId})`,
+      });
+      throw new Error('শুধুমাত্র প্রধান অ্যাডমিন নতুন অ্যাডমিন বা ব্যবহারকারী যোগ করতে পারবেন। (Only the Main Admin can add admins.)');
+    }
+
     const users = this.getUsers();
     const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
     const finalPassword = (tempPassword || '').trim() || 'temp1234';
+
+    if (cleanEmail === MAIN_ADMIN_EMAIL.toLowerCase()) {
+      throw new Error('প্রধান অ্যাডমিনের ইমেইল দিয়ে নতুন সহকারী অ্যাডমিন তৈরি করা যাবে না।');
+    }
 
     const existingIdx = users.findIndex(
       (u) => u.email?.toLowerCase().trim() === cleanEmail
     );
 
+    let targetUser: UserAccount;
     if (existingIdx !== -1) {
-      users[existingIdx].role = role;
-      users[existingIdx].name = name;
-      users[existingIdx].displayName = name;
-      users[existingIdx].password = finalPassword;
+      users[existingIdx] = {
+        ...users[existingIdx],
+        role,
+        name: cleanName,
+        displayName: cleanName,
+        password: finalPassword,
+        isMainAdmin: false,
+        status: 'active',
+      };
+      targetUser = users[existingIdx];
       this.saveUsers(users);
     } else {
-      const newUser: UserAccount = {
-        userId: `USR-${String(users.length + 1).padStart(6, '0')}`,
+      targetUser = {
+        userId: `USR-ADM-${Date.now()}`,
         username: cleanEmail.split('@')[0],
         email: cleanEmail,
-        name,
-        displayName: name,
+        name: cleanName,
+        displayName: cleanName,
         role,
         password: finalPassword,
         isMainAdmin: false,
         status: 'active',
         createdAt: new Date().toISOString().split('T')[0],
       };
-      users.push(newUser);
+      users.push(targetUser);
       this.saveUsers(users);
     }
 
+    FirebaseSyncService.addAdminInFirebase({
+      user: targetUser,
+      password: finalPassword,
+      createdBy: actor,
+    }).catch((err) => {
+      console.warn('Firebase addAdminInFirebase notice:', err);
+    });
+
     this.logActivity({
-      userId: creator?.userId || 'SYS',
-      userDisplayName: creator?.displayName || 'প্রধান অ্যাডমিন',
+      userId: actor.userId,
+      userDisplayName: actor.displayName,
       role: 'admin',
-      action: 'CREATE_USER',
+      action: role === 'admin' ? 'ADD_ADMIN' : 'CREATE_USER',
       module: 'User Management',
-      description: `নতুন একাউন্ট তৈরি: ${name} (${cleanEmail}) [রোল: ${
+      referenceId: targetUser.userId,
+      description: `নতুন একাউন্ট তৈরি ও ফায়ারবেস রেকর্ড সংরক্ষিত: ${cleanName} (${cleanEmail}) [রোল: ${
         role === 'admin' ? 'সহকারী অ্যাডমিন' : role
-      }, অস্থায়ী পাসওয়ার্ড সেট করা হয়েছে]`,
+      }]`,
     });
 
     return this.getAppData();
+  }
+
+  static async addUserWithFirebaseSync(
+    email: string,
+    name: string,
+    role: Role,
+    tempPassword?: string,
+    creator?: UserAccount
+  ): Promise<{ success: boolean; message: string; user?: UserAccount; data: FullAppData }> {
+    const actor = creator || this.getCurrentUser();
+    if (!isStrictMainAdmin(actor)) {
+      this.logActivity({
+        userId: actor?.userId || 'UNKNOWN',
+        userDisplayName: actor?.displayName || 'Unknown User',
+        role: actor?.role || 'member',
+        action: 'UNAUTHORIZED_ADD_ADMIN_ATTEMPT',
+        module: 'Security',
+        description: `অননুমোদিত অ্যাডমিন যোগ করার চেষ্টা প্রতিহত করা হয়েছে: ${email} (${actor?.email || actor?.userId})`,
+      });
+      return {
+        success: false,
+        message: 'শুধুমাত্র প্রধান অ্যাডমিন নতুন অ্যাডমিন যোগ করতে পারবেন। (Only the Main Admin is permitted to add admins.)',
+        data: this.getAppData(),
+      };
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    const finalPassword = (tempPassword || '').trim() || 'temp1234';
+
+    if (cleanEmail === MAIN_ADMIN_EMAIL.toLowerCase()) {
+      return {
+        success: false,
+        message: 'প্রধান অ্যাডমিনের ইমেইল দিয়ে নতুন সহকারী অ্যাডমিন তৈরি করা যাবে না।',
+        data: this.getAppData(),
+      };
+    }
+
+    const users = this.getUsers();
+    const existingIdx = users.findIndex(
+      (u) => u.email?.toLowerCase().trim() === cleanEmail
+    );
+
+    let targetUser: UserAccount;
+    if (existingIdx !== -1) {
+      users[existingIdx] = {
+        ...users[existingIdx],
+        role,
+        name: cleanName,
+        displayName: cleanName,
+        password: finalPassword,
+        isMainAdmin: false,
+        status: 'active',
+      };
+      targetUser = users[existingIdx];
+    } else {
+      targetUser = {
+        userId: `USR-ADM-${Date.now()}`,
+        username: cleanEmail.split('@')[0],
+        email: cleanEmail,
+        name: cleanName,
+        displayName: cleanName,
+        role,
+        password: finalPassword,
+        isMainAdmin: false,
+        status: 'active',
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+      users.push(targetUser);
+    }
+
+    this.saveUsers(users);
+
+    const fbRes = await FirebaseSyncService.addAdminInFirebase({
+      user: targetUser,
+      password: finalPassword,
+      createdBy: actor,
+    });
+
+    if (fbRes.firebaseUid) {
+      const refreshedUsers = this.getUsers();
+      const idx = refreshedUsers.findIndex((u) => u.userId === targetUser.userId);
+      if (idx !== -1) {
+        refreshedUsers[idx].firebaseUid = fbRes.firebaseUid;
+        this.saveUsers(refreshedUsers);
+        targetUser = refreshedUsers[idx];
+      }
+    }
+
+    this.logActivity({
+      userId: actor.userId,
+      userDisplayName: actor.displayName,
+      role: 'admin',
+      action: role === 'admin' ? 'ADD_ADMIN' : 'CREATE_USER',
+      module: 'User Management',
+      referenceId: targetUser.userId,
+      description: `প্রধান অ্যাডমিন কর্তৃক নতুন একাউন্ট তৈরি ও ফায়ারবেসে রেকর্ড সংরক্ষণ: ${cleanName} (${cleanEmail}) [রোল: ${
+        role === 'admin' ? 'সহকারী অ্যাডমিন' : role
+      }]`,
+    });
+
+    return {
+      success: fbRes.success,
+      message: fbRes.success
+        ? `${cleanName} (${cleanEmail})-কে ${role === 'admin' ? 'সহকারী অ্যাডমিন' : role} হিসেবে যুক্ত করা হয়েছে এবং ফায়ারবেসে রেকর্ড সংরক্ষিত হয়েছে!`
+        : fbRes.message,
+      user: targetUser,
+      data: this.getAppData(),
+    };
   }
 
   static updateUserRole(
@@ -3947,13 +4373,26 @@ export class StorageService {
     status: 'active' | 'inactive' = 'active',
     requestingUser?: UserAccount
   ): FullAppData {
+    const req = requestingUser || this.getCurrentUser();
+    if (!isStrictMainAdmin(req)) {
+      this.logActivity({
+        userId: req?.userId || 'UNKNOWN',
+        userDisplayName: req?.displayName || 'Unknown User',
+        role: req?.role || 'member',
+        action: 'UNAUTHORIZED_ROLE_UPDATE_ATTEMPT',
+        module: 'Security',
+        description: `অননুমোদিত অ্যাডমিন রোল পরিবর্তনের চেষ্টা প্রতিহত করা হয়েছে: ${userId}`,
+      });
+      return this.getAppData();
+    }
+
     const users = this.getUsers();
     const idx = users.findIndex((u) => u.userId === userId);
     if (idx !== -1) {
       const isTargetMainAdmin =
-        users[idx].isMainAdmin === true ||
+        isStrictMainAdmin(users[idx]) ||
         users[idx].email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
-        users[idx].userId === 'USR-000001';
+        users[idx].userId === 'USR-MAIN-ADMIN';
 
       if (isTargetMainAdmin) {
         // Main Admin is immutable
@@ -3963,10 +4402,15 @@ export class StorageService {
       } else {
         users[idx].role = role;
         users[idx].status = status;
+        users[idx].isMainAdmin = false;
       }
       this.saveUsers(users);
 
-      const req = requestingUser || this.getCurrentUser();
+      FirebaseSyncService.syncAdminRoleUpdateInFirebase({
+        user: users[idx],
+        updatedBy: req,
+      }).catch(() => {});
+
       this.logActivity({
         userId: req.userId,
         userDisplayName: req.displayName,
@@ -3975,7 +4419,7 @@ export class StorageService {
         module: 'User Management',
         description: `ব্যবহারকারীর রোল আপডেট: ${users[idx].name || users[idx].displayName} (${
           users[idx].email || users[idx].username
-        }) -> ${role === 'admin' ? 'সহকারী অ্যাডমিন' : 'সদস্য'} [স্ট্যাটাস: ${status}]`,
+        }) -> ${role === 'admin' ? 'সহকারী অ্যাডমিন' : role} [স্ট্যাটাস: ${status}]`,
       });
     }
     return this.getAppData();

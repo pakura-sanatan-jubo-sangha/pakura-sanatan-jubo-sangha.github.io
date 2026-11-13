@@ -10,6 +10,7 @@ import {
   Member,
 } from '../types';
 import { getTranslation, formatMemberPhone } from '../lib/translations';
+import { isStrictMainAdmin, MAIN_ADMIN_EMAIL, StorageService } from '../lib/storage';
 import {
   ShieldAlert,
   UserPlus,
@@ -40,6 +41,9 @@ import {
   MapPin,
   CalendarClock,
   Eye,
+  EyeOff,
+  Key,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AdminAndRulesViewProps {
@@ -49,7 +53,7 @@ interface AdminAndRulesViewProps {
   language: Language;
   meetings?: GeneralMeeting[];
   members?: Member[];
-  onAddUser: (email: string, name: string, role: UserRole, tempPassword?: string) => void;
+  onAddUser: (email: string, name: string, role: UserRole, tempPassword?: string) => Promise<void> | void;
   onUpdateRole: (userId: string, role: UserRole, status: 'active' | 'inactive') => void;
   onDeleteUser: (userId: string) => void;
   onAddRule: (rule: Omit<SocietyRule, 'ruleId' | 'createdAt' | 'updatedAt' | 'addedBy' | 'addedByEmail'>) => void;
@@ -58,6 +62,7 @@ interface AdminAndRulesViewProps {
   onCreateMeeting?: (meeting: { title: string; meetingDate: string; scheduledTime: string; location: string; agenda?: string; notes?: string }) => void;
   onRecordAttendance?: (meetingId: string, attendees: MeetingAttendee[], notes?: string) => void;
   onDeleteMeeting?: (meetingId: string) => void;
+  onPasswordUpdated?: (message?: string) => void;
 }
 
 export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
@@ -76,6 +81,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
   onCreateMeeting,
   onRecordAttendance,
   onDeleteMeeting,
+  onPasswordUpdated,
 }) => {
   const t = getTranslation(language);
   const isAdmin = currentUser.role === 'admin';
@@ -125,6 +131,17 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
   const [editRole, setEditRole] = useState<UserRole>('member');
   const [editStatus, setEditStatus] = useState<'active' | 'inactive'>('active');
   const [userToDelete, setUserToDelete] = useState<UserAccount | null>(null);
+  const [isAddingAdmin, setIsAddingAdmin] = useState(false);
+
+  // Self-service Admin Password Change states (for both Main Admin & Auxiliary Admins)
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [currPassInput, setCurrPassInput] = useState('');
+  const [newPassInput, setNewPassInput] = useState('');
+  const [confirmPassInput, setConfirmPassInput] = useState('');
+  const [showPassFields, setShowPassFields] = useState(false);
+  const [passChangeError, setPassChangeError] = useState<string | null>(null);
+  const [passChangeSuccess, setPassChangeSuccess] = useState<string | null>(null);
+  const [isUpdatingPass, setIsUpdatingPass] = useState(false);
 
   // Society Rules states
   const [showAddRuleModal, setShowAddRuleModal] = useState(false);
@@ -142,18 +159,12 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
   const [ruleCategoryFilter, setRuleCategoryFilter] = useState<string>('all');
   const [ruleSearch, setRuleSearch] = useState('');
 
-  const isMainAdmin =
-    currentUser.role === 'admin' &&
-    (currentUser.isMainAdmin === true ||
-      currentUser.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' ||
-      currentUser.userId === 'USR-000001' ||
-      currentUser.userId === 'USR-MAIN-ADMIN');
+  const isMainAdmin = isStrictMainAdmin(currentUser);
 
   const isTargetMainAdmin = (u: UserAccount) => {
     return (
-      u.isMainAdmin === true ||
-      u.email?.toLowerCase() === 'freelancerkajolchandradas@gmail.com' ||
-      u.userId === 'USR-000001' ||
+      isStrictMainAdmin(u) ||
+      u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() ||
       u.userId === 'USR-MAIN-ADMIN'
     );
   };
@@ -161,35 +172,108 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
   // Only display sub-accounts / assigned admins created by the Main Admin
   const managedUsers = users.filter((u) => !isTargetMainAdmin(u));
 
-  // Handle Add User Submit
-  const handleAddUserSubmit = (e: React.FormEvent) => {
+  // Handle Add User Submit (Strictly Main Admin Only)
+  const handleAddUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMainAdmin) return;
     if (!newEmail.trim() || !newName.trim()) return;
-    onAddUser(
-      newEmail.trim().toLowerCase(),
-      newName.trim(),
-      newRole,
-      newTempPassword.trim() || 'temp1234'
-    );
-    setNewEmail('');
-    setNewName('');
-    setNewTempPassword('temp1234');
-    setShowAddUserModal(false);
+    setIsAddingAdmin(true);
+    try {
+      await onAddUser(
+        newEmail.trim().toLowerCase(),
+        newName.trim(),
+        newRole,
+        newTempPassword.trim() || 'temp1234'
+      );
+      setNewEmail('');
+      setNewName('');
+      setNewTempPassword('temp1234');
+      setShowAddUserModal(false);
+    } finally {
+      setIsAddingAdmin(false);
+    }
   };
 
-  // Handle Edit User Submit
+  // Handle Edit User Submit (Strictly Main Admin Only)
   const handleEditUserSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMainAdmin) return;
     if (!editingUser) return;
     onUpdateRole(editingUser.userId, editRole, editStatus);
     setEditingUser(null);
   };
 
-  // Handle Delete User
+  // Handle Delete User (Strictly Main Admin Only)
   const handleConfirmDeleteUser = () => {
+    if (!isMainAdmin) return;
     if (!userToDelete) return;
     onDeleteUser(userToDelete.userId);
     setUserToDelete(null);
+  };
+
+  // Handle Self-Service Admin Password Change (Main Admin or Auxiliary Admin -> Syncs to Firebase)
+  const handleAdminSelfPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassChangeError(null);
+    setPassChangeSuccess(null);
+
+    if (newPassInput.trim() !== confirmPassInput.trim()) {
+      setPassChangeError(
+        language === 'bn' ? 'নতুন পাসওয়ার্ড দুটি মেলেনি!' : 'New passwords do not match!'
+      );
+      return;
+    }
+
+    if (newPassInput.trim().length < 4) {
+      setPassChangeError(
+        language === 'bn'
+          ? 'পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে।'
+          : 'Password must be at least 4 characters long.'
+      );
+      return;
+    }
+
+    setIsUpdatingPass(true);
+    try {
+      const res = isMainAdmin
+        ? await StorageService.updateAdminPasswordWithFirebaseSync(
+            currPassInput.trim(),
+            newPassInput.trim(),
+            currentUser
+          )
+        : await StorageService.changeUserPasswordAndSyncFirebase(
+            currentUser.userId,
+            newPassInput.trim(),
+            currPassInput.trim()
+          );
+
+      if (!res.success) {
+        setPassChangeError(res.message);
+      } else {
+        const msg =
+          language === 'bn'
+            ? 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে এবং ফায়ারবেসে হালনাগাদ করা হয়েছে!'
+            : 'Password updated successfully and synced to Firebase!';
+        setPassChangeSuccess(msg);
+        setCurrPassInput('');
+        setNewPassInput('');
+        setConfirmPassInput('');
+        if (onPasswordUpdated) onPasswordUpdated(msg);
+        setTimeout(() => {
+          setShowChangePasswordModal(false);
+          setPassChangeSuccess(null);
+        }, 1200);
+      }
+    } catch (err: any) {
+      setPassChangeError(
+        err?.message ||
+          (language === 'bn'
+            ? 'ফায়ারবেসে পাসওয়ার্ড হালনাগাদ করতে সমস্যা হয়েছে।'
+            : 'Error updating password in Firebase.')
+      );
+    } finally {
+      setIsUpdatingPass(false);
+    }
   };
 
   // Handle Add/Edit Rule Submit
@@ -645,9 +729,11 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white">
                     MAIN ADMIN
                   </span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
-                    {language === 'bn' ? 'আপনি' : 'You'}
-                  </span>
+                  {isMainAdmin && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
+                      {language === 'bn' ? 'আপনি' : 'You'}
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5 flex items-center gap-2">
                   <span>•</span>
@@ -659,16 +745,49 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
               </div>
             </div>
 
-            {isMainAdmin && (
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
               <button
-                onClick={() => setShowAddUserModal(true)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-all self-start sm:self-auto cursor-pointer"
+                type="button"
+                onClick={() => {
+                  setPassChangeError(null);
+                  setPassChangeSuccess(null);
+                  setCurrPassInput('');
+                  setNewPassInput('');
+                  setConfirmPassInput('');
+                  setShowChangePasswordModal(true);
+                }}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
               >
-                <UserPlus className="w-4 h-4" />
-                <span>{language === 'bn' ? 'সহকারী অ্যাডমিন যোগ করুন' : 'Add Admin'}</span>
+                <Key className="w-4 h-4 text-amber-600" />
+                <span>{language === 'bn' ? 'আমার পাসওয়ার্ড পরিবর্তন' : 'Change My Password'}</span>
               </button>
-            )}
+
+              {isMainAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isMainAdmin) return;
+                    setShowAddUserModal(true);
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{language === 'bn' ? 'সহকারী অ্যাডমিন যোগ করুন' : 'Add Admin'}</span>
+                </button>
+              )}
+            </div>
           </div>
+
+          {!isMainAdmin && (
+            <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300">
+              <Shield className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <span>
+                {language === 'bn'
+                  ? 'নতুন অ্যাডমিন যোগ করা, রোল পরিবর্তন করা বা অ্যাডমিন অপসারণের অধিকার শুধুমাত্র প্রধান অ্যাডমিনের জন্য সংরক্ষিত। তবে আপনি আপনার নিজের পাসওয়ার্ড পরিবর্তন করতে পারবেন (যা সরাসরি ফায়ারবেসে আপডেট হবে)।'
+                  : 'Only the Main Admin is permitted to add, edit, or remove admins. You can update your own password at any time (synced to Firebase).'}
+              </span>
+            </div>
+          )}
 
           {/* Assigned Admins Table */}
           <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
@@ -1171,9 +1290,9 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: ADD SUB-ADMIN USER                                       */}
+      {/* MODAL: ADD SUB-ADMIN USER (MAIN ADMIN ONLY -> FIREBASE SYNC)   */}
       {/* ============================================================== */}
-      {showAddUserModal && (
+      {showAddUserModal && isMainAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -1249,8 +1368,8 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                 />
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                   {language === 'bn'
-                    ? '💡 তিনি এই জিমেইল ও অস্থায়ী পাসওয়ার্ড দিয়ে প্রবেশ করে পরবর্তীতে নিজের পছন্দের পাসওয়ার্ড সেট করে নিতে পারবেন।'
-                    : '💡 They will log in with this email and temporary password, then change it to one of their own choosing.'}
+                    ? '💡 তথ্যটি ফায়ারবেসে স্থায়ীভাবে সংরক্ষিত হবে। তিনি লগইন করে পরবর্তীতে পাসওয়ার্ড পরিবর্তন করলে তা ফায়ারবেসেও আপডেট হয়ে যাবে।'
+                    : '💡 Saved permanently in Firebase. When they change their password later, it will automatically update in Firebase.'}
                 </p>
               </div>
 
@@ -1258,15 +1377,18 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowAddUserModal(false)}
+                  disabled={isAddingAdmin}
                   className="px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 cursor-pointer"
                 >
                   {t.cancel}
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-xs cursor-pointer"
+                  disabled={isAddingAdmin}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
                 >
-                  {t.save}
+                  {isAddingAdmin && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{t.save}</span>
                 </button>
               </div>
             </form>
@@ -1275,9 +1397,9 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: EDIT USER ROLE                                          */}
+      {/* MODAL: EDIT USER ROLE (MAIN ADMIN ONLY)                        */}
       {/* ============================================================== */}
-      {editingUser && (
+      {editingUser && isMainAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
             <h3 className="font-bold text-base text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
@@ -1867,7 +1989,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
           </div>
         </div>
       )}
-      {userToDelete && (
+      {userToDelete && isMainAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
             <div className="flex items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800 text-red-600">
@@ -1918,6 +2040,123 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                 <span>{language === 'bn' ? 'হ্যাঁ, মুছে ফেলুন' : 'Yes, Delete'}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: SELF-SERVICE ADMIN PASSWORD CHANGE (FIREBASE SYNCED)    */}
+      {/* ============================================================== */}
+      {showChangePasswordModal && isAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-600" />
+                <span>{language === 'bn' ? 'অ্যাডমিন পাসওয়ার্ড পরিবর্তন' : 'Change Admin Password'}</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowChangePasswordModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="mt-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
+              <div className="font-bold text-slate-900 dark:text-white">{currentUser.name || currentUser.displayName}</div>
+              <div className="text-[11px] text-slate-500 font-mono">{currentUser.email}</div>
+            </div>
+
+            {passChangeError && (
+              <div className="mt-3 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 text-xs text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span>{passChangeError}</span>
+              </div>
+            )}
+
+            {passChangeSuccess && (
+              <div className="mt-3 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                <span>{passChangeSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAdminSelfPasswordSubmit} className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'বর্তমান পাসওয়ার্ড' : 'Current Password'} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type={showPassFields ? 'text' : 'password'}
+                  required
+                  value={currPassInput}
+                  onChange={(e) => setCurrPassInput(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'নতুন পাসওয়ার্ড' : 'New Password'} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type={showPassFields ? 'text' : 'password'}
+                  required
+                  minLength={4}
+                  value={newPassInput}
+                  onChange={(e) => setNewPassInput(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'নতুন পাসওয়ার্ড নিশ্চিত করুন' : 'Confirm New Password'} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type={showPassFields ? 'text' : 'password'}
+                  required
+                  minLength={4}
+                  value={confirmPassInput}
+                  onChange={(e) => setConfirmPassInput(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showPassFields}
+                  onChange={(e) => setShowPassFields(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                <span>{language === 'bn' ? 'পাসওয়ার্ড দেখুন' : 'Show passwords'}</span>
+              </label>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordModal(false)}
+                  disabled={isUpdatingPass}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPass}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  {isUpdatingPass ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>{language === 'bn' ? 'ফায়ারবেসে আপডেট করুন' : 'Update in Firebase'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
