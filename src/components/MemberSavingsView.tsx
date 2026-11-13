@@ -503,7 +503,7 @@ export const MemberSavingsView: React.FC<MemberSavingsViewProps> = ({
                     </td>
                     <td className="p-3.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
                       ৳{StorageService.sanitizeAmount(c.amount, c.contributionType, c.month).toLocaleString()}
-                      {c.lateFee && Number(c.lateFee) > 0 && (
+                      {Number(c.lateFee || 0) > 0 && (
                         <span className="block text-[10px] text-amber-600 font-normal">
                           +{language === 'bn' ? 'জরিমানা ৳' : 'late ৳'}{Number(c.lateFee)}
                         </span>

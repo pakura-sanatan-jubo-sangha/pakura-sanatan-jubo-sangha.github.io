@@ -1225,13 +1225,7 @@ export class FirebaseSyncService {
               memberSystemId: c?.memberSystemId || '',
               memberName: c?.memberName || '',
               phone: c?.phone || '',
-              amount: (() => {
-                const a = Number(c?.amount || 0);
-                if (a === 1000 && c?.contributionType !== 'seasonal_booster' && c?.contributionType !== 'special_fund') return 100;
-                if (a === 6000 && c?.contributionType !== 'seasonal_booster') return 600;
-                if (a === 3000 && c?.contributionType !== 'seasonal_booster') return 300;
-                return a;
-              })(),
+              amount: Number(c?.amount || 0),
               contributionDate: c?.contributionDate || '',
               month: c?.month || '',
               paymentMethod: c?.paymentMethod || 'cash',
@@ -1461,13 +1455,7 @@ export class FirebaseSyncService {
               memberSystemId: c?.memberSystemId || c?.memberId || c?.systemId || '',
               memberName: c?.memberName || c?.member_name || c?.name || '',
               phone: c?.phone || c?.memberPhone || '',
-              amount: (() => {
-                const a = Number(c?.amount || c?.contributionAmount || 0);
-                if (a === 1000 && c?.contributionType !== 'seasonal_booster' && c?.contributionType !== 'special_fund') return 100;
-                if (a === 6000 && c?.contributionType !== 'seasonal_booster') return 600;
-                if (a === 3000 && c?.contributionType !== 'seasonal_booster') return 300;
-                return a;
-              })(),
+              amount: Number(c?.amount || c?.contributionAmount || 0),
               contributionDate: c?.contributionDate || c?.date || '',
               month: c?.month || '',
               paymentMethod: c?.paymentMethod || c?.payment_method || 'cash',

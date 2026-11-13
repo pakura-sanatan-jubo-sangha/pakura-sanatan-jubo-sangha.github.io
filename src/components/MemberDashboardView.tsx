@@ -1143,7 +1143,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                             </td>
                             <td className="p-3 font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                               ৳{StorageService.sanitizeAmount(c.amount, c.contributionType, c.month).toLocaleString()}
-                              {c.lateFee && Number(c.lateFee) > 0 && (
+                              {Number(c.lateFee || 0) > 0 && (
                                 <span className="block text-[10px] text-amber-600 font-normal">
                                   +{language === 'bn' ? 'বিলম্ব ফি' : 'Late fee'} ৳{Number(c.lateFee)}
                                 </span>

@@ -1837,14 +1837,9 @@ export class StorageService {
   }
 
   // --- Contributions ---
-  static sanitizeAmount(amount: any, type?: string, month?: string): number {
+  static sanitizeAmount(amount: any, _type?: string, _month?: string): number {
     const num = typeof amount === 'string' ? parseFloat(amount) : Number(amount || 0);
-    if (isNaN(num) || num <= 0) return 100;
-    // Auto-repair string concatenation bugs (e.g. 100 + "0" = 1000, 600 + "0" = 6000, 300 + "0" = 3000)
-    // Regular monthly savings is ৳100. Any 1000 value not marked as a seasonal booster or special fund is the 100 + "0" concatenation glitch.
-    if (num === 1000 && type !== 'seasonal_booster' && type !== 'special_fund') return 100;
-    if (num === 6000 && type !== 'seasonal_booster') return 600;
-    if (num === 3000 && type !== 'seasonal_booster') return 300;
+    if (isNaN(num) || num <= 0) return 0;
     return num;
   }
 
