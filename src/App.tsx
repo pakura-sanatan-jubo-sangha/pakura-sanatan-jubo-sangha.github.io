@@ -1337,7 +1337,7 @@ export default function App() {
                   className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <LogIn className="w-4 h-4" />
-                  <span>{language === 'bn' ? 'অ্যাকাউন্টে লগইন করুন' : 'Login to Account'}</span>
+                  <span>{language === 'bn' ? 'অ্যাকাউন্ট লগইন' : 'Account Login'}</span>
                 </button>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-center">

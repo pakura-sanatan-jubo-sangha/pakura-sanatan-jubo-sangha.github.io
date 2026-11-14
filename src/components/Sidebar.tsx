@@ -149,37 +149,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* Role Indicator Banner */}
-      <div className="mb-3 px-3 py-2 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 shadow-2xs">
-        <div className="flex items-center gap-2">
-          {isAdmin ? (
-            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-          ) : isMember ? (
-            <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-          ) : (
-            <Eye className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-          )}
-          <div className="min-w-0">
-            <div className="text-[11px] font-bold text-slate-900 dark:text-white truncate">
-              {isAdmin
-                ? isMainAdmin
-                  ? language === 'bn' ? 'প্রধান সুপার অ্যাডমিন' : 'Main Super Admin'
-                  : language === 'bn' ? 'অ্যাডমিন' : 'Admin'
-                : isMember
-                ? `${currentUser.name || currentUser.displayName}`
-                : language === 'bn' ? 'ভিউ-অনলি মোড' : 'View-Only Mode'}
-            </div>
-            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-              {isAdmin
-                ? language === 'bn' ? 'পূর্ণ এডিটিং ও পরিচালনা সক্রিয়' : 'Full Edit & Management'
-                : isMember
-                ? language === 'bn' ? `সাধারণ সদস্য • ${currentUser.username || 'লগইন'}` : `General Member • ${currentUser.username || 'Active'}`
-                : language === 'bn' ? 'ড্যাশবোর্ড পর্যবেক্ষণ (লগইন প্রয়োজন)' : 'Dashboard (Login Required)'}
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Navigation Label */}
       <div className="px-3 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
         {language === 'bn' ? 'প্রধান মেনু' : 'Navigation Menu'}
