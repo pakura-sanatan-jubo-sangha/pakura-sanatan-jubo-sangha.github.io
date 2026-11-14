@@ -102,6 +102,7 @@ export const INITIAL_SETTINGS: AppSettings = {
   minReserveBalance: 500, // ৳500 minimum reserve
   language: 'bn',
   theme: 'light',
+  generalMeetingTime: '8:30 PM',
 };
 
 // Phone normalization helper (handles Bengali digits, country code, spaces)
@@ -860,7 +861,7 @@ export class StorageService {
         meetingId: newMeetingId,
         title: `মাসিক সাধারণ সভা - ${monthName}`,
         meetingDate: today,
-        scheduledTime: '০৮:০০ PM',
+        scheduledTime: this.getSettings().generalMeetingTime || '08:30 PM',
         location: 'সমিতির কার্যালয় (পাকুড়া)',
         agenda: 'মাসিক সঞ্চয় আদায়, হিসাব নিরীক্ষা ও সাধারণ আলোচনা',
         status: 'scheduled',
@@ -3650,7 +3651,7 @@ export class StorageService {
         meetingDate: '2025-01-01',
         title: 'মাসিক সাধারণ সভা ও সদস্যদের বাধ্যতামূলক উপস্থিতি বিধান',
         category: 'meeting',
-        decisionDetails: 'প্রতি ইংরেজি মাসের ১ থেকে ১১ তারিখের মধ্যকার শেষ শুক্রবারে রাত ৮:০০ ঘটিকায় সমিতির কার্যালয়ে মাসিক সাধারণ সভা অনুষ্ঠিত হবে। সমিতির সকল সদস্যের যথাসময়ে সভায় উপস্থিত থেকে হাজিরা দেওয়া বাধ্যতামূলক। সাধারণ সভায় গৃহীত সিদ্ধান্তই সমিতির চূড়ান্ত সিদ্ধান্ত বলে গণ্য হবে।',
+        decisionDetails: 'প্রতি ইংরেজি মাসের ১ থেকে ১১ তারিখের মধ্যকার শেষ শুক্রবারে রাত ৮:৩০ ঘটিকায় সমিতির কার্যালয়ে মাসিক সাধারণ সভা অনুষ্ঠিত হবে। সমিতির সকল সদস্যের যথাসময়ে সভায় উপস্থিত থেকে হাজিরা দেওয়া বাধ্যতামূলক। সাধারণ সভায় গৃহীত সিদ্ধান্তই সমিতির চূড়ান্ত সিদ্ধান্ত বলে গণ্য হবে।',
         resolutionNumber: 'রেজোলিউশন-০১/২০২৫',
         status: 'active',
         addedBy: 'সমিতি কার্যনির্বাহী পরিষদ',
@@ -4585,7 +4586,7 @@ export class StorageService {
         meetingId: 'MTG-000001',
         title: `মাসিক সাধারণ সভা - ${monthLabel}`,
         meetingDate: todayStr,
-        scheduledTime: '০৮:০০ PM',
+        scheduledTime: this.getSettings().generalMeetingTime || '08:30 PM',
         location: 'সংঘ কার্যালয় / প্রাঙ্গণ',
         agenda: 'মাসিক সঞ্চয় ও কার্যক্রম পর্যালোচনা',
         status: 'completed',
@@ -4685,7 +4686,7 @@ export class StorageService {
       meetingId,
       title: data.title,
       meetingDate: data.meetingDate,
-      scheduledTime: data.scheduledTime || '08:00 PM',
+      scheduledTime: data.scheduledTime || this.getSettings().generalMeetingTime || '08:30 PM',
       location: data.location || 'সমিতির কার্যালয়',
       agenda: data.agenda || '',
       status: 'scheduled',

@@ -69,6 +69,7 @@ interface MemberDashboardViewProps {
   onNavigate?: (tab: string) => void;
   dueDay?: number;
   lateFeeAmount?: number;
+  generalMeetingTime?: string;
   initialTab?: 'overview' | 'penalties' | 'attendance' | 'security' | 'rules' | 'withdrawals';
   onMarkAttendance?: (memberSystemId: string, memberName: string) => void;
   onExecuteWithdrawal?: (params: {
@@ -109,6 +110,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
   onNavigate,
   dueDay = 10,
   lateFeeAmount = 10,
+  generalMeetingTime,
   initialTab = 'overview',
   onMarkAttendance,
   onExecuteWithdrawal,
@@ -595,6 +597,8 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
       <MeetingNoticeBanner
         language={language}
         rules={rules}
+        meetings={meetings}
+        generalMeetingTime={generalMeetingTime}
         onNavigate={onNavigate}
       />
 
@@ -2044,7 +2048,7 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                   </span>
                   <div className="text-slate-600 dark:text-slate-400 mt-1.5 space-y-1">
                     <div>📅 {language === 'bn' ? 'তারিখ:' : 'Date:'} {upcomingMeeting?.meetingDate || todayStr}</div>
-                    <div>⏰ {language === 'bn' ? 'সময়:' : 'Time:'} {upcomingMeeting?.scheduledTime || '০৮:০০ PM'}</div>
+                    <div>⏰ {language === 'bn' ? 'সময়:' : 'Time:'} {upcomingMeeting?.scheduledTime || generalMeetingTime || '8:30 PM'}</div>
                     <div>📍 {language === 'bn' ? 'স্থান:' : 'Location:'} {upcomingMeeting?.location || 'পাকুড়া সমিতির কার্যালয়'}</div>
                   </div>
                 </div>

@@ -245,20 +245,6 @@ export interface NotificationItem {
   createdAt: string;
 }
 
-export interface ChatMessage {
-  id: string;
-  senderId: string;
-  senderName: string;
-  senderRole: 'admin' | 'member';
-  senderPhone?: string;
-  senderEmail?: string;
-  text: string;
-  imageUrl?: string;
-  imageFileName?: string;
-  createdAt: string;
-  expiresAt: string;
-}
-
 export interface ActivityLogItem {
   logId: string;
   dateTime: string;
@@ -303,7 +289,7 @@ export interface GeneralMeeting {
   meetingId: string; // e.g. "MTG-000001"
   title: string;
   meetingDate: string; // YYYY-MM-DD
-  scheduledTime: string; // e.g. "08:00 PM"
+  scheduledTime: string; // e.g. "08:30 PM"
   location: string;
   agenda?: string;
   status: 'scheduled' | 'completed' | 'cancelled';
@@ -343,6 +329,8 @@ export interface AppSettings {
   maxWithdrawalPercentage?: number; // e.g. 70 (max 70% of member's total funds can be withdrawn)
   minReserveBalance?: number; // e.g. 500 (minimum ৳500 reserve to keep membership active)
   adminPassword?: string;
+  generalMeetingTime?: string; // e.g. "8:30 PM" or "20:30" (synced with Firebase)
+  meetingTimeUpdatedAt?: string;
 }
 
 export interface DashboardMetrics {

@@ -11,7 +11,6 @@ import {
   Phone,
   Key,
   Lock,
-  MessageSquare,
 } from 'lucide-react';
 
 interface MobileNavProps {
@@ -153,20 +152,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           >
             <CreditCard className="w-5 h-5 transition-transform duration-200 group-hover:scale-115" />
             <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'ঋণ' : 'Loans'}</span>
-          </button>
-
-          {/* Shared Community Space & Chat */}
-          <button
-            onClick={() => onSelectTab('chat')}
-            className={`group flex flex-col items-center gap-0.5 p-1 rounded-xl text-[10px] font-medium transition-all duration-200 transform hover:scale-110 active:scale-95 cursor-pointer ${
-              currentTab === 'chat'
-                ? 'text-amber-600 dark:text-amber-400 font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
-            }`}
-            title={language === 'bn' ? 'কমিউনিটি চ্যাট ও বার্তা' : 'Community Chat'}
-          >
-            <MessageSquare className="w-5 h-5 transition-transform duration-200 group-hover:scale-115 text-emerald-600 dark:text-emerald-400" />
-            <span className="transition-transform duration-200 group-hover:scale-105">{language === 'bn' ? 'চ্যাট' : 'Chat'}</span>
           </button>
 
           {/* Logout */}

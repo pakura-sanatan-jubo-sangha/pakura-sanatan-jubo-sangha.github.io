@@ -49,6 +49,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const t = getTranslation(language);
   const [orgName, setOrgName] = useState(settings.societyName || 'পাকুড়া সনাতন যুব সংঘ');
+  const [generalMeetingTime, setGeneralMeetingTime] = useState(settings.generalMeetingTime || '8:30 PM');
   const [contributionAmount, setContributionAmount] = useState(settings.monthlyContributionAmount || 100);
   const [dueDay, setDueDay] = useState(settings.contributionDueDay || 10);
   const [lateFeeAmount, setLateFeeAmount] = useState(settings.lateFeeAmount || 10);
@@ -58,6 +59,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [googleAppsScriptUrl, setGoogleAppsScriptUrl] = useState(settings.googleAppsScriptUrl || '');
   const [autoSyncSheets, setAutoSyncSheets] = useState(settings.autoSyncSheets ?? true);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  React.useEffect(() => {
+    if (settings.generalMeetingTime) {
+      setGeneralMeetingTime(settings.generalMeetingTime);
+    }
+  }, [settings.generalMeetingTime]);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetConfirmEmail, setResetConfirmEmail] = useState('');
   const [resetEmailError, setResetEmailError] = useState<string | null>(null);
@@ -83,8 +90,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSubmitGeneral = (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanedMeetingTime = generalMeetingTime.trim() || '8:30 PM';
     onUpdateSettings({
       societyName: orgName.trim(),
+      generalMeetingTime: cleanedMeetingTime,
+      meetingTimeUpdatedAt: new Date().toISOString(),
       monthlyContributionAmount: Number(contributionAmount),
       contributionDueDay: Number(dueDay),
       lateFeeAmount: Number(lateFeeAmount),
@@ -599,6 +609,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
               <span className="text-[10px] text-slate-400 mt-0.5 block">
                 {language === 'bn' ? 'উত্তোলনের পরও অ্যাকাউন্টে ন্যূনতম অবশিষ্ট' : 'Min balance that must remain'}
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1 flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? 'সাধারণ সভার নির্ধারিত সময়' : 'General Meeting Time'}</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={generalMeetingTime}
+                onChange={(e) => setGeneralMeetingTime(e.target.value)}
+                placeholder="8:30 PM"
+                className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-amber-200 dark:border-amber-800 text-slate-900 dark:text-white font-bold"
+              />
+              <span className="text-[10px] text-slate-400 mt-0.5 block">
+                {language === 'bn' ? 'ফায়ারবেসের সাথে রিয়েল-টাইম সিঙ্ক (যেমন: 8:30 PM)' : 'Synced live with Firebase (e.g. 8:30 PM)'}
               </span>
             </div>
           </div>

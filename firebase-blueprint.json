@@ -289,7 +289,9 @@
         "lateFeeAmount": { "type": "number" },
         "loanMonthlyRate": { "type": "number" },
         "cashOpeningBalance": { "type": "number" },
-        "bankOpeningBalance": { "type": "number" }
+        "bankOpeningBalance": { "type": "number" },
+        "generalMeetingTime": { "type": "string", "description": "Scheduled monthly General Meeting time (e.g. '8:30 PM' or '20:30')" },
+        "meetingTimeUpdatedAt": { "type": "string", "format": "date-time" }
       }
     }
   },

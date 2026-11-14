@@ -29,7 +29,6 @@ import {
   PiggyBank,
   LogIn,
   Globe,
-  MessageSquare,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -458,19 +457,6 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                   )}
                 </div>
-
-                {/* Shared Community Space & Chat Shortcut */}
-                <button
-                  type="button"
-                  onClick={() => onNavigateTab ? onNavigateTab('chat') : null}
-                  className="p-2 sm:px-2.5 sm:py-1.5 rounded-xl text-slate-600 hover:text-emerald-600 hover:bg-emerald-50/80 dark:text-slate-300 dark:hover:text-emerald-400 dark:hover:bg-slate-800 transition-all cursor-pointer flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 shadow-2xs"
-                  title={language === 'bn' ? 'একীভূত বার্তা ও আলোচনা কেন্দ্র' : 'Shared Community Space & Chat'}
-                >
-                  <MessageSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span className="hidden md:inline text-xs font-bold text-slate-700 dark:text-slate-200">
-                    {language === 'bn' ? 'চ্যাটস্পেস' : 'Chat'}
-                  </span>
-                </button>
 
                 {/* 2. Notification Bell Icon: Replaces the Lock/Logout option in that exact spot */}
                 <div className="relative" ref={notificationRef}>

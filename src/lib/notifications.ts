@@ -189,7 +189,7 @@ export function generateUserNotifications(
       title: language === 'bn' ? `সাধারণ সভা: ${cleanTitle}` : `Meeting: ${cleanTitle}`,
       message:
         language === 'bn'
-          ? `তারিখ: ${m.meetingDate} | সময়: ${m.scheduledTime || 'রাত ৮:০০'} | স্থান: ${cleanLocation}। সকল সদস্যকে যথাসময়ে উপস্থিত হয়ে হাজিরা প্রদানের অনুরোধ করা হচ্ছে।`
+          ? `তারিখ: ${m.meetingDate} | সময়: ${m.scheduledTime || 'রাত ৮:৩০'} | স্থান: ${cleanLocation}। সকল সদস্যকে যথাসময়ে উপস্থিত হয়ে হাজিরা প্রদানের অনুরোধ করা হচ্ছে।`
           : `Date: ${m.meetingDate} | Time: ${m.scheduledTime} | Location: ${cleanLocation}. Please attend and mark presence.`,
       isRead: readIds.has(`mtg-${m.meetingId}`),
       createdAt: m.createdAt || `${todayStr}T08:00:00Z`,

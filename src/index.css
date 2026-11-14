@@ -119,11 +119,24 @@
 .animate-marquee-rtl {
   display: flex;
   width: max-content;
-  animation: marqueeScrollRTL 45s linear infinite;
+  animation: marqueeScrollRTL 110s linear infinite;
   will-change: transform;
 }
 
-.animate-marquee-rtl:hover {
+@media (min-width: 640px) {
+  .animate-marquee-rtl {
+    animation-duration: 95s;
+  }
+}
+
+@media (min-width: 1024px) {
+  .animate-marquee-rtl {
+    animation-duration: 85s;
+  }
+}
+
+.animate-marquee-rtl:hover,
+.animate-marquee-rtl:active {
   animation-play-state: paused;
 }
 

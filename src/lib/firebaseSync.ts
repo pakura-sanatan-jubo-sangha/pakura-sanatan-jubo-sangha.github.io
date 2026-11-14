@@ -2486,7 +2486,15 @@ export class FirebaseSyncService {
       try {
         const settingsSnap = await getDoc(doc(db, 'settings', 'app_settings'));
         if (settingsSnap.exists()) {
-          result.settings = settingsSnap.data() as AppSettings;
+          const sData = settingsSnap.data() as Record<string, any>;
+          const resolvedTime = sData.generalMeetingTime || sData.meetingTime || sData.scheduledTime;
+          if (resolvedTime) {
+            sData.generalMeetingTime = String(resolvedTime).trim();
+          }
+          if (sData.updatedAt && !sData.meetingTimeUpdatedAt) {
+            sData.meetingTimeUpdatedAt = String(sData.updatedAt);
+          }
+          result.settings = sData as AppSettings;
         }
       } catch (err) {
         console.warn('Settings load notice:', err);
@@ -2693,6 +2701,85 @@ export class FirebaseSyncService {
       unsubscribes.push(unsub);
     } catch (e) {
       console.warn('Realtime withdrawals listener notice:', e);
+    }
+
+    // 6. Real-time Organization Settings Listener (Instant meeting time & config sync)
+    try {
+      const unsub = onSnapshot(
+        doc(db, 'settings', 'app_settings'),
+        (snap) => {
+          if (!snap.exists()) return;
+          const sData = snap.data() as Record<string, any>;
+          const resolvedTime = sData.generalMeetingTime || sData.meetingTime || sData.scheduledTime;
+          if (resolvedTime) {
+            sData.generalMeetingTime = String(resolvedTime).trim();
+          }
+          if (sData.updatedAt && !sData.meetingTimeUpdatedAt) {
+            sData.meetingTimeUpdatedAt = String(sData.updatedAt);
+          }
+          onUpdate({ settings: sData as AppSettings });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'settings/app_settings');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime settings listener notice:', e);
+    }
+
+    // 7. Real-time General Meetings Listener (Instant scheduled meeting updates)
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'meetings'),
+        (snap) => {
+          const meetings: GeneralMeeting[] = parseSnapshot(snap, (d) => {
+            const m = d.data();
+            const mId = m?.meetingId || d.id;
+            if (!mId) return null;
+            return {
+              ...m,
+              meetingId: mId,
+            } as GeneralMeeting;
+          });
+          if (meetings.length > 0) {
+            onUpdate({ meetings });
+          }
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'meetings');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime meetings listener notice:', e);
+    }
+
+    // 8. Real-time Society Rules Listener (Instant resolutions & bylaws sync)
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'rules'),
+        (snap) => {
+          const rules: SocietyRule[] = parseSnapshot(snap, (d) => {
+            const r = d.data();
+            const rId = r?.ruleId || d.id;
+            if (!rId) return null;
+            return {
+              ...r,
+              ruleId: rId,
+            } as SocietyRule;
+          });
+          if (rules.length > 0) {
+            onUpdate({ rules });
+          }
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'rules');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime rules listener notice:', e);
     }
 
     // Return cleanup unsubscribe function

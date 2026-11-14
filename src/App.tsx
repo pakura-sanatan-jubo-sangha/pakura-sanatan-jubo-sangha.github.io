@@ -37,7 +37,6 @@ import { WithdrawalsManagementView } from './components/WithdrawalsManagementVie
 import { InteractiveHoverEffects } from './components/InteractiveHoverEffects';
 import { AuthModal, AuthMode } from './components/AuthModal';
 import { NotificationsModal } from './components/NotificationsModal';
-import { CommunityChatView } from './components/CommunityChatView';
 import {
   generateUserNotifications,
   markNotificationAsRead,
@@ -83,7 +82,6 @@ const VALID_SPA_TABS = new Set([
   'activity_log',
   'settings',
   'notifications',
-  'chat',
   'penalties',
   'profit',
   'member_profit',
@@ -320,6 +318,14 @@ export default function App() {
         }
         if (!cloudData?.settings) {
           FirebaseSyncService.syncSettings(StorageService.getSettings()).catch(() => {});
+        } else {
+          const cs = cloudData.settings as Record<string, any>;
+          if (!cs.generalMeetingTime && !cs.meetingTime && !cs.scheduledTime) {
+            FirebaseSyncService.syncSettings({
+              ...cloudData.settings,
+              generalMeetingTime: StorageService.getSettings().generalMeetingTime || '8:30 PM',
+            }).catch(() => {});
+          }
         }
       } catch (err) {
         console.warn('Firestore cloud sync notice:', err);
@@ -1264,6 +1270,8 @@ export default function App() {
               currentUser={currentUser}
               language={language}
               rules={appData.rules || []}
+              meetings={appData.meetings || []}
+              generalMeetingTime={appData.settings.generalMeetingTime}
               onNavigate={setCurrentTab}
               onQuickAddMember={() => {
                 if (!isAdmin) {
@@ -1650,6 +1658,7 @@ export default function App() {
               monthlyAmount={appData.settings.monthlyContributionAmount}
               dueDay={appData.settings.contributionDueDay}
               lateFeeAmount={appData.settings.lateFeeAmount}
+              generalMeetingTime={appData.settings.generalMeetingTime}
               initialTab={
                 currentTab === 'member_penalties' || currentTab === 'penalties'
                   ? 'penalties'
@@ -1743,15 +1752,6 @@ export default function App() {
                 </p>
               </div>
             )
-          )}
-
-          {/* 16. Shared Community Space & Chat (Members & Admins) */}
-          {!isViewOnly && currentTab === 'chat' && (
-            <CommunityChatView
-              currentUser={currentUser}
-              language={language}
-              onOpenLoginModal={() => setAuthModalState({ isOpen: true, mode: 'login' })}
-            />
           )}
         </main>
       </div>

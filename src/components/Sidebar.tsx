@@ -32,7 +32,6 @@ import {
   Phone,
   Bell,
   Coins,
-  MessageSquare,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -94,7 +93,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'income', label: language === 'bn' ? 'আয় বিবরণী' : 'Income Details', icon: ArrowDownRight },
         { id: 'expenses', label: language === 'bn' ? 'ব্যয় বিবরণী' : 'Expense Details', icon: ArrowUpRight },
         { id: 'transactions', label: language === 'bn' ? 'ব্যাংক হিসাব ও লেনদেন খতিয়ান' : 'Bank Ledger & Transactions', icon: BookOpen },
-        { id: 'chat', label: language === 'bn' ? 'কমিউনিটি চ্যাট ও বার্তা' : 'Community Chat', icon: MessageSquare },
         { id: 'admin_rules', label: language === 'bn' ? 'সংবিধিবদ্ধ নিয়মাবলী' : 'Rules & Regulations', icon: Scale },
       ]
     : [
@@ -108,7 +106,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Coins,
           badge: pendingWithdrawalsCount,
         },
-        { id: 'chat', label: language === 'bn' ? 'কমিউনিটি চ্যাট ও বার্তা' : 'Community Chat', icon: MessageSquare },
         { id: 'income', label: language === 'bn' ? 'আয় বিবরণী' : 'Income Details', icon: ArrowDownRight },
         { id: 'expenses', label: language === 'bn' ? 'ব্যয় বিবরণী' : 'Expense Details', icon: ArrowUpRight },
         { id: 'transactions', label: t.navTransactions, icon: BookOpen },

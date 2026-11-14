@@ -1,5 +1,5 @@
 import React from 'react';
-import { DashboardMetrics, Language, UserAccount, Transaction, SocietyRule } from '../types';
+import { DashboardMetrics, Language, UserAccount, Transaction, SocietyRule, GeneralMeeting } from '../types';
 import { getTranslation } from '../lib/translations';
 import { MeetingNoticeBanner } from './MeetingNoticeBanner';
 import {
@@ -27,6 +27,8 @@ interface DashboardViewProps {
   currentUser: UserAccount;
   language: Language;
   rules?: SocietyRule[];
+  meetings?: GeneralMeeting[];
+  generalMeetingTime?: string;
   onNavigate: (tab: string) => void;
   onQuickAddMember: () => void;
   onQuickContribution: () => void;
@@ -42,6 +44,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
   language,
   rules,
+  meetings,
+  generalMeetingTime,
   onNavigate,
   onQuickAddMember,
   onQuickContribution,
@@ -106,6 +110,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <MeetingNoticeBanner
         language={language}
         rules={rules}
+        meetings={meetings}
+        generalMeetingTime={generalMeetingTime}
         onNavigate={onNavigate}
       />
 
