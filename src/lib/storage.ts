@@ -589,7 +589,7 @@ export class StorageService {
       }
       localStorage.setItem(STORAGE_KEYS.MEMBER_WITHDRAWALS, JSON.stringify(Array.from(wthMap.values())));
 
-      // 13. Transactions: Union merge
+      // 13. Transactions: Union merge (authoritative cloud values for description & partyName/partname)
       const localTrx = this.getTransactions();
       const trxMap = new Map<string, Transaction>();
       localTrx.forEach((t) => {
@@ -598,7 +598,35 @@ export class StorageService {
       if (cloudData.transactions && cloudData.transactions.length > 0) {
         cloudData.transactions.forEach((t) => {
           if (t.memberSystemId && deletedIds.has(t.memberSystemId)) return;
-          trxMap.set(t.transactionId, t);
+          const existing = trxMap.get(t.transactionId) as (Transaction & { partname?: string }) | undefined;
+          const incomingAny = t as Transaction & { partname?: string };
+          let resolvedPartyName = String(incomingAny.partyName ?? incomingAny.partname ?? existing?.partyName ?? '');
+          if (
+            incomingAny.partname !== undefined &&
+            existing &&
+            incomingAny.partyName === existing.partyName &&
+            incomingAny.partname !== existing.partyName
+          ) {
+            resolvedPartyName = String(incomingAny.partname);
+          } else if (
+            incomingAny.partname !== undefined &&
+            existing?.partname !== undefined &&
+            incomingAny.partname === existing.partname &&
+            incomingAny.partyName !== existing.partname
+          ) {
+            resolvedPartyName = String(incomingAny.partyName ?? resolvedPartyName);
+          }
+          const resolvedDescription = String(t.description ?? existing?.description ?? '');
+          const mergedTrx: Transaction & { partname?: string } = {
+            ...(existing || {}),
+            ...t,
+            partyName: resolvedPartyName,
+            description: resolvedDescription,
+          };
+          if (incomingAny.partname !== undefined) {
+            mergedTrx.partname = String(incomingAny.partname);
+          }
+          trxMap.set(t.transactionId, mergedTrx);
         });
       }
       localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(Array.from(trxMap.values())));
@@ -3236,7 +3264,7 @@ export class StorageService {
       list.reverse();
 
       if (hasChanges || !raw) {
-        this.saveTransactions(list);
+        localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(list));
       }
 
       return list;
@@ -3296,21 +3324,20 @@ export class StorageService {
     );
 
     if (existingIndex >= 0) {
-      // Update in place rather than creating duplicate
+      // Preserve immutable financial fields on existing transactions and update ONLY description & partyName
+      const nextParty = data.partyName || list[existingIndex].partyName;
+      const nextDesc = data.description || list[existingIndex].description;
       list[existingIndex] = {
         ...list[existingIndex],
-        type: data.type,
-        referenceId: data.referenceId || list[existingIndex].referenceId,
-        memberSystemId: data.memberSystemId || list[existingIndex].memberSystemId,
-        borrowerId: data.borrowerId || list[existingIndex].borrowerId,
-        partyName: data.partyName || list[existingIndex].partyName,
-        description: data.description || list[existingIndex].description,
-        debit: data.debit,
-        credit: data.credit,
-        paymentMethod: data.paymentMethod,
-        createdBy: data.createdBy,
+        partyName: nextParty,
+        description: nextDesc,
       };
-      this.saveTransactions(list);
+      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(list));
+      FirebaseSyncService.updateTransactionTextOnly(
+        list[existingIndex].transactionId,
+        { description: nextDesc, partyName: nextParty },
+        list[existingIndex]
+      ).catch(() => {});
       return list[existingIndex];
     }
 
@@ -3346,8 +3373,99 @@ export class StorageService {
     };
 
     list.unshift(newTrx);
-    this.saveTransactions(list);
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(list));
+    FirebaseSyncService.syncTransaction(newTrx).catch(() => {});
     return newTrx;
+  }
+
+  /**
+   * Update ONLY 'description' and 'partyName' (partname) on a master ledger transaction
+   * and sync directly to Firebase (/transactions/{transactionId}), reflecting across all views.
+   */
+  static async updateTransactionDetails(
+    transactionId: string,
+    updates: { description: string; partyName: string },
+    currentUser: UserAccount
+  ): Promise<{ success: boolean; message: string; data: FullAppData }> {
+    const canEdit =
+      currentUser &&
+      currentUser.userId !== 'USR-VIEW-ONLY' &&
+      ['admin', 'president', 'treasurer', 'secretary'].includes(currentUser.role);
+
+    if (!canEdit) {
+      return {
+        success: false,
+        message: 'শুধুমাত্র অনুমোদিত অ্যাডমিন/কমিটি লেনদেনের বিবরণ ও নাম হালনাগাদ করতে পারবেন।',
+        data: this.getAppData(),
+      };
+    }
+
+    const cleanDesc = String(updates.description ?? '').trim().slice(0, 500);
+    const cleanParty = String(updates.partyName ?? '').trim().slice(0, 200);
+
+    if (!cleanDesc || !cleanParty) {
+      return {
+        success: false,
+        message: 'অনুগ্রহ করে সঠিক নাম (Party Name) এবং বিবরণ (Description) উভয়ই লিখুন।',
+        data: this.getAppData(),
+      };
+    }
+
+    const list = this.getTransactions();
+    const idx = list.findIndex((t) => t.transactionId === transactionId);
+    if (idx === -1) {
+      return {
+        success: false,
+        message: 'সংশ্লিষ্ট লেনদেনটি খুঁজে পাওয়া যায়নি।',
+        data: this.getAppData(),
+      };
+    }
+
+    const prevTrx = list[idx];
+    const updatedTrx: Transaction & { partname?: string } = {
+      ...prevTrx,
+      description: cleanDesc,
+      partyName: cleanParty,
+    };
+    if ((prevTrx as any).partname !== undefined) {
+      updatedTrx.partname = cleanParty;
+    }
+
+    list[idx] = updatedTrx;
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(list));
+
+    const fbRes = await FirebaseSyncService.updateTransactionTextOnly(
+      transactionId,
+      { description: cleanDesc, partyName: cleanParty },
+      updatedTrx
+    );
+
+    if (!fbRes.success) {
+      // Revert local state if Firebase rejected the update
+      list[idx] = prevTrx;
+      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(list));
+      return {
+        success: false,
+        message: fbRes.message,
+        data: this.getAppData(),
+      };
+    }
+
+    this.logActivity({
+      userId: currentUser.userId,
+      userDisplayName: currentUser.displayName,
+      role: currentUser.role,
+      action: 'UPDATE_TRANSACTION_TEXT',
+      module: 'Transactions',
+      referenceId: transactionId,
+      description: `লেনদেন #${transactionId} এর নাম ও বিবরণ হালনাগাদ: "${cleanParty}" — "${cleanDesc}"`,
+    });
+
+    return {
+      success: true,
+      message: 'লেনদেনের বিবরণ ও নাম ফায়ারবেসসহ সর্বত্র সফলভাবে হালনাগাদ হয়েছে!',
+      data: this.getAppData(),
+    };
   }
 
   static reverseTransaction(transactionId: string, reason: string, currentUser: UserAccount): boolean {

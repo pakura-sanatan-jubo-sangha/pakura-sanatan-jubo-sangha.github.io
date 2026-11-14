@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocFromServer,
   setDoc,
+  updateDoc,
   deleteDoc,
   query,
   where,
@@ -74,6 +75,35 @@ export function verifyTypedEmailMatchesAdminGmail(
   const cleanActual = (actualAdminEmail || '').toLowerCase().trim();
   if (!cleanTyped || !cleanActual) return false;
   return cleanActual.includes(cleanTyped);
+}
+
+export function normalizeTransactionFromFirestore(raw: any, docId?: string): Transaction & { partname?: string } {
+  const txId = String(raw?.transactionId || docId || '').trim();
+  const hasPartyName = raw?.partyName !== undefined && raw?.partyName !== null;
+  const hasPartname = raw?.partname !== undefined && raw?.partname !== null;
+  const rawParty = hasPartyName ? String(raw.partyName) : hasPartname ? String(raw.partname) : '';
+  const resolvedParty =
+    hasPartname && String(raw.partname).trim() !== '' && String(raw.partname) !== rawParty
+      ? String(raw.partname)
+      : rawParty;
+
+  return {
+    ...(raw || {}),
+    transactionId: txId,
+    date: String(raw?.date || ''),
+    type: (raw?.type || 'income') as Transaction['type'],
+    referenceId: String(raw?.referenceId || ''),
+    partyName: resolvedParty,
+    ...(hasPartname ? { partname: String(raw.partname) } : {}),
+    description: String(raw?.description ?? ''),
+    debit: Number(raw?.debit || 0),
+    credit: Number(raw?.credit || 0),
+    balanceAfter: Number(raw?.balanceAfter || 0),
+    paymentMethod: (raw?.paymentMethod || 'cash') as Transaction['paymentMethod'],
+    createdBy: String(raw?.createdBy || 'System'),
+    createdAt: String(raw?.createdAt || ''),
+    status: (raw?.status || 'active') as Transaction['status'],
+  };
 }
 
 /**
@@ -2725,22 +2755,111 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Sync master ledger transaction to Firestore (/transactions/{transactionId})
+   * Sync master ledger transaction to Firestore (/transactions/{transactionId}).
+   * Creates new transactions with full data; for already-stored transactions, ONLY description and partyName/partname may be updated.
    */
   static async syncTransaction(transaction: Transaction): Promise<void> {
     if (!transaction.transactionId) return;
     const path = `transactions/${transaction.transactionId}`;
     try {
+      const ref = doc(db, 'transactions', transaction.transactionId);
+      const existingSnap = await getDocFromServer(ref).catch(() => getDoc(ref));
+
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data() as Record<string, any>;
+        const nextDesc = String(transaction.description ?? '').slice(0, 500);
+        const nextParty = String(transaction.partyName ?? '').slice(0, 200);
+        const patch: Record<string, any> = {};
+        if (nextDesc !== String(existingData?.description ?? '')) {
+          patch.description = nextDesc;
+        }
+        if (nextParty !== String(existingData?.partyName ?? '')) {
+          patch.partyName = nextParty;
+        }
+        if (existingData?.partname !== undefined && nextParty !== String(existingData.partname ?? '')) {
+          patch.partname = nextParty;
+        }
+        if (Object.keys(patch).length > 0) {
+          await updateDoc(ref, patch);
+        }
+        return;
+      }
+
       const cleanData: Record<string, any> = {};
       Object.entries(transaction).forEach(([k, v]) => {
-        if (v !== undefined) {
+        if (v !== undefined && k !== 'partname') {
           cleanData[k] = v;
         }
       });
-      const ref = doc(db, 'transactions', transaction.transactionId);
-      await setDoc(ref, cleanData, { merge: true });
+      await setDoc(ref, cleanData);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  }
+
+  /**
+   * Update ONLY 'description' and 'partyName' (plus 'partname' if present on the doc) in Firebase /transactions/{transactionId}.
+   */
+  static async updateTransactionTextOnly(
+    transactionId: string,
+    updates: { description: string; partyName: string },
+    fallbackTransaction?: Transaction
+  ): Promise<{ success: boolean; message: string }> {
+    if (!transactionId) {
+      return { success: false, message: 'অবৈধ ট্রানজেকশন আইডি।' };
+    }
+    const path = `transactions/${transactionId}`;
+    const cleanDesc = String(updates.description ?? '').trim().slice(0, 500);
+    const cleanParty = String(updates.partyName ?? '').trim().slice(0, 200);
+
+    try {
+      const ref = doc(db, 'transactions', transactionId);
+      const existingSnap = await getDocFromServer(ref).catch(() => getDoc(ref));
+
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data() as Record<string, any>;
+        const patch: Record<string, any> = {
+          description: cleanDesc,
+          partyName: cleanParty,
+        };
+        if (existingData?.partname !== undefined) {
+          patch.partname = cleanParty;
+        }
+        await updateDoc(ref, patch);
+        return {
+          success: true,
+          message: 'ফায়ারবেসে লেনদেনের বিবরণ ও নাম সফলভাবে হালনাগাদ হয়েছে!',
+        };
+      }
+
+      if (fallbackTransaction) {
+        const cleanData: Record<string, any> = {};
+        Object.entries({
+          ...fallbackTransaction,
+          description: cleanDesc,
+          partyName: cleanParty,
+        }).forEach(([k, v]) => {
+          if (v !== undefined && k !== 'partname') {
+            cleanData[k] = v;
+          }
+        });
+        await setDoc(ref, cleanData);
+        return {
+          success: true,
+          message: 'ফায়ারবেসে লেনদেন সংরক্ষণ ও হালনাগাদ সম্পন্ন হয়েছে!',
+        };
+      }
+
+      return {
+        success: false,
+        message: 'ফায়ারবেসে এই লেনদেনটি খুঁজে পাওয়া যায়নি।',
+      };
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+      return {
+        success: false,
+        message: error?.message || 'ফায়ারবেসে লেনদেন হালনাগাদ করতে সমস্যা হয়েছে।',
+      };
     }
   }
 
@@ -2882,9 +3001,33 @@ export class FirebaseSyncService {
       for (const dist of appData.profitDistributions || []) {
         await this.syncProfitDistribution(dist);
       }
-      // 9. Master Ledger Transactions
+      // 9. Master Ledger Transactions (only create missing; existing transactions allow only description & partyName updates)
+      const existingTrxSnap = await getDocs(collection(db, 'transactions'));
+      const existingTrxMap = new Map<string, Record<string, any>>();
+      existingTrxSnap.forEach((d) => existingTrxMap.set(d.id, d.data()));
       for (const t of appData.transactions || []) {
-        await this.syncTransaction(t);
+        if (!t.transactionId) continue;
+        const ref = doc(db, 'transactions', t.transactionId);
+        const existingData = existingTrxMap.get(t.transactionId);
+        if (existingData) {
+          const nextDesc = String(t.description ?? '').slice(0, 500);
+          const nextParty = String(t.partyName ?? '').slice(0, 200);
+          const patch: Record<string, any> = {};
+          if (nextDesc !== String(existingData?.description ?? '')) patch.description = nextDesc;
+          if (nextParty !== String(existingData?.partyName ?? '')) patch.partyName = nextParty;
+          if (existingData?.partname !== undefined && nextParty !== String(existingData.partname ?? '')) {
+            patch.partname = nextParty;
+          }
+          if (Object.keys(patch).length > 0) {
+            await updateDoc(ref, patch);
+          }
+        } else {
+          const cleanData: Record<string, any> = {};
+          Object.entries(t).forEach(([k, v]) => {
+            if (v !== undefined && k !== 'partname') cleanData[k] = v;
+          });
+          await setDoc(ref, cleanData);
+        }
       }
       // 10. Member Withdrawals
       for (const w of appData.memberWithdrawals || []) {
@@ -3155,9 +3298,9 @@ export class FirebaseSyncService {
       if (transactionsSnap.status === 'fulfilled') {
         const transactions: any[] = [];
         transactionsSnap.value.forEach((d) => {
-          const t = d.data();
-          if (t?.transactionId) {
-            transactions.push(t);
+          const raw = d.data();
+          if (raw?.transactionId || d.id) {
+            transactions.push(normalizeTransactionFromFirestore(raw, d.id));
           }
         });
         result.transactions = transactions;
@@ -3336,10 +3479,9 @@ export class FirebaseSyncService {
       const unsub = onSnapshot(
         collection(db, 'transactions'),
         (snap) => {
-          const transactions: any[] = parseSnapshot(snap, (d) => {
-            const t = d.data();
-            return t?.transactionId ? t : { ...t, transactionId: d.id };
-          });
+          const transactions: any[] = parseSnapshot(snap, (d) =>
+            normalizeTransactionFromFirestore(d.data(), d.id)
+          );
           onUpdate({ transactions });
         },
         (err) => {

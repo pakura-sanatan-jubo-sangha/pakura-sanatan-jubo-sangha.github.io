@@ -87,6 +87,13 @@ service cloud.firestore {
              data.module is string && data.module.size() <= 100;
     }
 
+    function isValidTransactionTextUpdate() {
+      return incoming().diff(existing()).affectedKeys().hasOnly(['description', 'partyName', 'partname']) &&
+             (!('description' in incoming()) || (incoming().description is string && incoming().description.size() <= 500)) &&
+             (!('partyName' in incoming()) || (incoming().partyName is string && incoming().partyName.size() <= 200)) &&
+             (!('partname' in incoming()) || (incoming().partname is string && incoming().partname.size() <= 200));
+    }
+
     // 1. Admins Registry
     match /admins/{adminId} {
       allow get, list: if true;
@@ -194,10 +201,11 @@ service cloud.firestore {
       allow create, update, delete: if true;
     }
 
-    // 15. Master Ledger Transactions
+    // 15. Master Ledger Transactions (only description and partyName/partname may be updated)
     match /transactions/{transactionId} {
       allow get, list: if true;
-      allow create, update, delete: if true;
+      allow create, delete: if true;
+      allow update: if isValidTransactionTextUpdate();
     }
 
     // 16. Shared Community Chat & Screenshot Messages

@@ -11,23 +11,89 @@ import {
   Calendar,
   Wallet,
   Building2,
+  Pencil,
+  X,
+  Lock,
+  Check,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 
 interface TransactionsViewProps {
   transactions: Transaction[];
   currentUser: UserAccount;
   language: Language;
+  onUpdateTransaction?: (
+    transactionId: string,
+    updates: { description: string; partyName: string }
+  ) => Promise<{ success: boolean; message: string }>;
 }
 
 export const TransactionsView: React.FC<TransactionsViewProps> = ({
   transactions,
   currentUser,
   language,
+  onUpdateTransaction,
 }) => {
   const t = getTranslation(language);
   const [filterType, setFilterType] = useState<'all' | 'credit' | 'debit'>('all');
   const [filterMethod, setFilterMethod] = useState<'all' | 'cash' | 'bank'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [editingTrx, setEditingTrx] = useState<Transaction | null>(null);
+  const [editPartyName, setEditPartyName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const canEditTransaction =
+    Boolean(onUpdateTransaction) &&
+    currentUser.userId !== 'USR-VIEW-ONLY' &&
+    ['admin', 'president', 'treasurer', 'secretary'].includes(currentUser.role);
+
+  const openEditModal = (trx: Transaction) => {
+    setEditingTrx(trx);
+    setEditPartyName(trx.partyName || (trx as any).partname || '');
+    setEditDescription(trx.description || '');
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTrx || !onUpdateTransaction) return;
+    const cleanParty = editPartyName.trim();
+    const cleanDesc = editDescription.trim();
+    if (!cleanParty || !cleanDesc) {
+      setEditError(
+        language === 'bn'
+          ? 'পার্টি নাম এবং বিবরণ উভয়ই পূরণ করা আবশ্যক।'
+          : 'Both Party Name and Description are required.'
+      );
+      return;
+    }
+    setIsSavingEdit(true);
+    setEditError(null);
+    try {
+      const res = await onUpdateTransaction(editingTrx.transactionId, {
+        partyName: cleanParty,
+        description: cleanDesc,
+      });
+      if (res?.success) {
+        setEditingTrx(null);
+      } else {
+        setEditError(
+          res?.message ||
+            (language === 'bn' ? 'আপডেট করতে সমস্যা হয়েছে।' : 'Failed to update transaction.')
+        );
+      }
+    } catch (err: any) {
+      setEditError(
+        err?.message ||
+          (language === 'bn' ? 'ফায়ারবেসে আপডেট ব্যর্থ হয়েছে।' : 'Firebase update failed.')
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
 
   // Deduplicate transactions strictly to avoid duplicate rows or inflated totals
   const uniqueTransactions = React.useMemo(() => {
@@ -64,9 +130,12 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   }, [transactions]);
 
   const filtered = uniqueTransactions.filter((trx) => {
+    const q = searchQuery.toLowerCase();
+    const party = (trx.partyName || (trx as any).partname || '').toLowerCase();
     const matchesSearch =
-      trx.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      trx.transactionId.toLowerCase().includes(searchQuery.toLowerCase());
+      (trx.description || '').toLowerCase().includes(q) ||
+      party.includes(q) ||
+      (trx.transactionId || '').toLowerCase().includes(q);
     const matchesType =
       filterType === 'all'
         ? true
@@ -207,7 +276,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder={language === 'bn' ? 'বিবরণ বা আইডি দিয়ে খুঁজুন...' : 'Search ledger...'}
+            placeholder={language === 'bn' ? 'নাম, বিবরণ বা আইডি দিয়ে খুঁজুন...' : 'Search by name, description or ID...'}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
@@ -300,11 +369,17 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 bg-slate-50/50 dark:bg-slate-800/30">
                   <th className="p-3 font-semibold">{t.date}</th>
                   <th className="p-3 font-semibold">{language === 'bn' ? 'ট্রানজেকশন আইডি' : 'Trx ID'}</th>
-                  <th className="p-3 font-semibold">{language === 'bn' ? 'বিবরণ' : 'Description'}</th>
+                  <th className="p-3 font-semibold">{language === 'bn' ? 'পার্টি নাম (Party Name)' : 'Party Name'}</th>
+                  <th className="p-3 font-semibold">{language === 'bn' ? 'বিবরণ (Description)' : 'Description'}</th>
                   <th className="p-3 font-semibold">{t.paymentMethod}</th>
                   <th className="p-3 font-semibold text-right">{language === 'bn' ? 'জমা (Credit)' : 'Credit'}</th>
                   <th className="p-3 font-semibold text-right">{language === 'bn' ? 'খরচ (Debit)' : 'Debit'}</th>
                   <th className="p-3 font-semibold text-right">{language === 'bn' ? 'তহবিল স্থিতি' : 'Fund Balance'}</th>
+                  {canEditTransaction && (
+                    <th className="p-3 font-semibold text-center print:hidden">
+                      {language === 'bn' ? 'সম্পাদনা' : 'Edit'}
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -312,6 +387,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                   <tr key={`${trx.transactionId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                     <td className="p-3 text-slate-500 whitespace-nowrap">{trx.date}</td>
                     <td className="p-3 text-slate-400 font-mono text-[11px]">#{trx.transactionId}</td>
+                    <td className="p-3 font-semibold text-slate-800 dark:text-slate-200 max-w-[180px]">
+                      {trx.partyName || (trx as any).partname || '—'}
+                    </td>
                     <td className="p-3 font-semibold text-slate-900 dark:text-white max-w-sm">
                       {trx.description}
                     </td>
@@ -329,6 +407,19 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     <td className="p-3 text-right font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
                       ৳{trx.balanceAfter.toLocaleString()}
                     </td>
+                    {canEditTransaction && (
+                      <td className="p-3 text-center print:hidden">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(trx)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 transition-colors cursor-pointer"
+                          title={language === 'bn' ? 'নাম ও বিবরণ সম্পাদনা করুন' : 'Edit Party Name & Description'}
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>{language === 'bn' ? 'এডিট' : 'Edit'}</span>
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -336,6 +427,117 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Edit Transaction Modal — strictly allows updating ONLY description and partyName */}
+      {editingTrx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in print:hidden">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 flex items-center justify-center">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {language === 'bn' ? 'লেনদেনের তথ্য হালনাগাদ' : 'Update Transaction Details'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-mono">
+                    #{editingTrx.transactionId} • {editingTrx.date}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingTrx(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Locked Financial Summary */}
+            <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-[11px] space-y-1.5">
+              <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 font-semibold">
+                <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>
+                  {language === 'bn'
+                    ? 'নিরাপত্তা নীতি: শুধুমাত্র Party Name ও Description পরিবর্তন করা যাবে (টাকার পরিমাণ ও তারিখ অপরিবর্তনীয়)।'
+                    : 'Only Party Name and Description can be updated; amounts & dates are locked.'}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-slate-500 dark:text-slate-400">
+                <span>
+                  {editingTrx.credit > 0
+                    ? `${language === 'bn' ? 'জমা' : 'Credit'}: +৳${editingTrx.credit.toLocaleString()}`
+                    : `${language === 'bn' ? 'খরচ' : 'Debit'}: -৳${editingTrx.debit.toLocaleString()}`}
+                </span>
+                <span className="uppercase font-mono">{editingTrx.paymentMethod}</span>
+              </div>
+            </div>
+
+            {editError && (
+              <div className="mt-3 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'পার্টি নাম (Party Name):' : 'Party Name:'}{' '}
+                  <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={200}
+                  value={editPartyName}
+                  onChange={(e) => setEditPartyName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'বিবরণ (Description):' : 'Description:'}{' '}
+                  <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  maxLength={500}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingTrx(null)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingEdit ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5" />
+                  )}
+                  <span>{language === 'bn' ? 'ফায়ারবেসে আপডেট করুন' : 'Save Changes'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

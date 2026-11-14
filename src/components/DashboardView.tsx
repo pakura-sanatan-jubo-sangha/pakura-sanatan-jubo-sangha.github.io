@@ -438,6 +438,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <thead>
                 <tr className="text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
                   <th className="pb-2 font-medium">{t.date}</th>
+                  <th className="pb-2 font-medium">{language === 'bn' ? 'পার্টি নাম' : 'Party Name'}</th>
                   <th className="pb-2 font-medium">{language === 'bn' ? 'বিবরণ' : 'Description'}</th>
                   <th className="pb-2 font-medium">{t.paymentMethod}</th>
                   <th className="pb-2 font-medium text-right">{language === 'bn' ? 'জমা (Inflow)' : 'Credit'}</th>
@@ -449,6 +450,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {recentTransactions.slice(0, 5).map((trx, idx) => (
                   <tr key={`${trx.transactionId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                     <td className="py-2.5 text-slate-500">{trx.date}</td>
+                    <td className="py-2.5 font-semibold text-slate-700 dark:text-slate-300">
+                      {trx.partyName || (trx as any).partname || '—'}
+                    </td>
                     <td className="py-2.5 font-medium text-slate-900 dark:text-slate-100">
                       {trx.description}
                     </td>

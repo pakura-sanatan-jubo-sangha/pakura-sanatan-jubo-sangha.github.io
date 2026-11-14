@@ -849,6 +849,25 @@ export default function App() {
     triggerAutoSaveToGoogleSheets(refreshed);
   };
 
+  const handleUpdateTransactionText = async (
+    transactionId: string,
+    updates: { description: string; partyName: string }
+  ) => {
+    const res = await StorageService.updateTransactionDetails(
+      transactionId,
+      updates,
+      currentUser
+    );
+    if (res.success) {
+      setAppData(res.data);
+      showToast(res.message);
+      triggerAutoSaveToGoogleSheets(res.data);
+    } else {
+      showToast(`⚠️ ${res.message}`);
+    }
+    return { success: res.success, message: res.message };
+  };
+
   const handleUpdateSpreadsheetId = (id: string) => {
     const updated = StorageService.updateSettings({ googleSheetId: id });
     setAppData(updated);
@@ -1553,6 +1572,7 @@ export default function App() {
               transactions={appData.transactions}
               currentUser={currentUser}
               language={language}
+              onUpdateTransaction={handleUpdateTransactionText}
             />
           )}
 
