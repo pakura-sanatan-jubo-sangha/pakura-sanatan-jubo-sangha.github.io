@@ -134,6 +134,20 @@ export function isStrictMainAdmin(user?: UserAccount | null): boolean {
   );
 }
 
+/**
+ * Checks whether a user account is a regular member improperly linked to a Gmail/email address
+ * (regular members must register and log in using only their phone numbers).
+ */
+export function isGmailLinkedMember(user?: Partial<UserAccount> | null): boolean {
+  if (!user) return false;
+  const email = (user.email || '').toLowerCase().trim();
+  if (!email || email.endsWith('@member.pakura.org')) return false;
+  if (user.userId === 'USR-MAIN-ADMIN') return false;
+  const role = String(user.role || 'member').toLowerCase().trim();
+  if (['admin', 'president', 'treasurer', 'secretary'].includes(role)) return false;
+  return role === 'member';
+}
+
 export class StorageService {
   // Automated backup snapshot export for zero-data-loss protection
   static exportFullBackup(): FullAppData {
@@ -237,6 +251,29 @@ export class StorageService {
         if (!localStorage.getItem(k)) {
           localStorage.setItem(k, JSON.stringify([]));
         }
+      }
+
+      // Remove any stale Gmail-linked regular member accounts from local cache
+      try {
+        const rawUsers = localStorage.getItem(STORAGE_KEYS.USERS);
+        if (rawUsers) {
+          const parsedUsers = JSON.parse(rawUsers);
+          if (Array.isArray(parsedUsers)) {
+            const filtered = parsedUsers.filter((u: UserAccount) => !isGmailLinkedMember(u));
+            if (filtered.length !== parsedUsers.length) {
+              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
+            }
+          }
+        }
+        const rawCurr = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        if (rawCurr) {
+          const curr = JSON.parse(rawCurr) as UserAccount;
+          if (isGmailLinkedMember(curr)) {
+            localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(VIEW_ONLY_USER));
+          }
+        }
+      } catch {
+        // Ignore user cleanup issues
       }
 
       // Automatically reconcile ledger so member balances match their net contributions
@@ -381,15 +418,19 @@ export class StorageService {
         localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
       }
 
-      // 2. Users
+      // 2. Users (strictly excluding obsolete Gmail-linked regular member accounts)
       if (cloudData.users && cloudData.users.length > 0) {
         const localUsers = this.getUsers();
         const map = new Map<string, UserAccount>();
-        localUsers.forEach((u) => map.set(u.userId, u));
+        localUsers.forEach((u) => {
+          if (!isGmailLinkedMember(u)) map.set(u.userId, u);
+        });
         cloudData.users.forEach((u) => {
-          if (u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() || u.userId === 'USR-MAIN-ADMIN') {
+          if (u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() && u.role === 'admin') {
             return;
           }
+          if (u.userId === 'USR-MAIN-ADMIN') return;
+          if (isGmailLinkedMember(u)) return;
           if (u.memberSystemId && deletedIds.has(u.memberSystemId)) return;
           map.set(u.userId, { ...u, isMainAdmin: false });
         });
@@ -988,7 +1029,8 @@ export class StorageService {
           uname !== 'assistant_admin' &&
           uname !== 'member1' &&
           email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
-          u.userId !== 'USR-MAIN-ADMIN'
+          u.userId !== 'USR-MAIN-ADMIN' &&
+          !isGmailLinkedMember(u)
         );
       });
     } catch {
@@ -1002,7 +1044,8 @@ export class StorageService {
         const email = (u.email || '').toLowerCase().trim();
         return (
           email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
-          u.userId !== 'USR-MAIN-ADMIN'
+          u.userId !== 'USR-MAIN-ADMIN' &&
+          !isGmailLinkedMember(u)
         );
       })
       .map((u) => ({
@@ -1435,6 +1478,9 @@ export class StorageService {
       };
 
       this.setCurrentUser(mainAdmin);
+      FirebaseSyncService.syncUserRegistrationHistoryInFirebase(mainAdmin, {
+        source: 'main_admin_login',
+      }).catch(() => {});
       this.logActivity({
         userId: mainAdmin.userId,
         userDisplayName: mainAdmin.displayName,
@@ -1462,7 +1508,16 @@ export class StorageService {
       if (!matchedByEmail) {
         return {
           success: false,
-          message: 'এই ইমেইলে কোনো অ্যাডমিন বা ব্যবহারকারী অ্যাকাউন্ট পাওয়া যায়নি। (No account found for this email.)',
+          message:
+            'এই ইমেইলে কোনো অনুমোদিত অ্যাডমিন অ্যাকাউন্ট পাওয়া যায়নি। সাধারণ সদস্যরা শুধুমাত্র মোবাইল নম্বর দিয়ে লগইন করতে পারবেন। (No authorized Admin account found for this Gmail. Regular members must log in using their phone number.)',
+        };
+      }
+
+      if (!['admin', 'president', 'treasurer', 'secretary'].includes(matchedByEmail.role)) {
+        return {
+          success: false,
+          message:
+            'সাধারণ সদস্যরা জিমেইল দিয়ে লগইন করতে পারবেন না। অনুগ্রহ করে শুধুমাত্র আপনার মোবাইল নম্বর দিয়ে লগইন করুন। (Regular members must log in using only their phone number.)',
         };
       }
 
@@ -1487,6 +1542,9 @@ export class StorageService {
       };
       this.setCurrentUser(safeUser);
       const isPrivileged = ['admin', 'president', 'treasurer', 'secretary'].includes(safeUser.role);
+      FirebaseSyncService.syncUserRegistrationHistoryInFirebase(safeUser, {
+        source: isPrivileged ? 'admin_login' : 'user_login',
+      }).catch(() => {});
       this.logActivity({
         userId: safeUser.userId,
         userDisplayName: safeUser.displayName,
@@ -1627,6 +1685,10 @@ export class StorageService {
     }
 
     this.setCurrentUser(matchedUser);
+    FirebaseSyncService.syncUserRegistrationHistoryInFirebase(matchedUser, {
+      member: matchedMember,
+      source: matchedUser.role === 'member' ? 'member_login' : 'admin_login',
+    }).catch(() => {});
     this.logActivity({
       userId: matchedUser.userId,
       userDisplayName: matchedUser.displayName,
@@ -1994,103 +2056,129 @@ export class StorageService {
     return res;
   }
 
-  // Authenticate user using Firebase Google Sign-In or OAuth:
-  // "However, if someone logs in using 'Sign in with Google' as the main admin,
-  // they will simply be designated as a standard member—not an admin.
-  // They will only become an admin if I specifically set up their account with admin privileges beforehand;
-  // otherwise, they won't have admin status."
+  // Authenticate ONLY authorized Admins using Firebase Google Sign-In.
+  // Regular members are NEVER permitted to sign in or create accounts with Google.
   static loginAdminWithFirebase(user: {
     uid: string;
     email?: string | null;
     displayName?: string | null;
-  }): UserAccount {
-    const users = this.getUsers();
+  }): UserAccount | null {
     const emailLower = (user.email || '').toLowerCase().trim();
+    if (!emailLower || emailLower.endsWith('@member.pakura.org')) {
+      return null;
+    }
 
-    // Check if there is an existing account specifically set up beforehand
-    const existingUser = users.find(
+    if (emailLower === MAIN_ADMIN_EMAIL.toLowerCase()) {
+      const mainAdmin: UserAccount = {
+        ...MAIN_ADMIN_ACCOUNT,
+        firebaseUid: user.uid,
+      };
+      this.setCurrentUser(mainAdmin);
+      FirebaseSyncService.syncUserRegistrationHistoryInFirebase(mainAdmin, {
+        source: 'main_admin_google_login',
+      }).catch(() => {});
+      return mainAdmin;
+    }
+
+    const users = this.getUsers();
+    const PRIVILEGED_ROLES = new Set(['admin', 'president', 'treasurer', 'secretary']);
+    const existingAdmin = users.find(
       (u) =>
-        u.userId === user.uid ||
-        (u.email && emailLower && u.email.toLowerCase().trim() === emailLower)
+        u.email &&
+        u.email.toLowerCase().trim() === emailLower &&
+        PRIVILEGED_ROLES.has(String(u.role || '').toLowerCase())
     );
 
-    const isMainAdminEmail = emailLower === MAIN_ADMIN_EMAIL.toLowerCase();
-
-    // Role resolution strictly following user's rules:
-    // If someone logs in with Google as the main admin, designated as standard member (not admin)
-    // Only pre-configured standard admins (created beforehand with role 'admin') get admin status
-    let designatedRole: Role = 'member';
-
-    if (isMainAdminEmail) {
-      // Explicit rule: "if someone logs in using 'Sign in with Google' as the main admin, they will simply be designated as a standard member—not an admin."
-      designatedRole = 'member';
-    } else if (existingUser && existingUser.role === 'admin' && !existingUser.isMainAdmin) {
-      // Explicitly set up beforehand with admin privileges by the main admin
-      designatedRole = 'admin';
-    } else if (existingUser) {
-      // Keep their existing pre-set role (e.g. member, etc.)
-      designatedRole = existingUser.role === 'admin' ? 'admin' : 'member';
-    } else {
-      // New user logging in via Google without prior admin setup is strictly a standard member
-      designatedRole = 'member';
+    if (!existingAdmin || existingAdmin.status === 'inactive') {
+      return null;
     }
 
-    const members = this.getMembers();
-    let linkedMemberSystemId = existingUser?.memberSystemId;
-    if (!linkedMemberSystemId && designatedRole === 'member') {
-      const match = members.find(
-        (m) =>
-          ((m as any).email && emailLower && (m as any).email.toLowerCase().trim() === emailLower) ||
-          (user.displayName && (m.name.includes(user.displayName) || user.displayName.includes(m.name)))
-      );
-      if (match) {
-        linkedMemberSystemId = match.systemId;
-      }
-    }
-
-    const resolvedUser: UserAccount = {
-      userId: existingUser?.userId || user.uid,
-      username: existingUser?.username || (emailLower ? emailLower.split('@')[0] : 'user_firebase'),
-      displayName: existingUser?.displayName || user.displayName || user.email || 'সাধারণ সদস্য (Member)',
-      email: user.email || existingUser?.email || '',
-      password: existingUser?.password,
-      role: designatedRole,
-      isMainAdmin: false, // Google login never grants main admin status!
-      status: existingUser?.status || 'active',
-      memberSystemId: linkedMemberSystemId,
-      createdAt: existingUser?.createdAt || new Date().toISOString().split('T')[0],
+    const resolvedAdmin: UserAccount = {
+      ...existingAdmin,
+      firebaseUid: user.uid || existingAdmin.firebaseUid,
+      isMainAdmin: false,
     };
 
-    const idx = users.findIndex(
-      (u) =>
-        u.userId === resolvedUser.userId ||
-        (u.email && resolvedUser.email && u.email.toLowerCase().trim() === resolvedUser.email.toLowerCase().trim())
+    const updatedUsers = users.map((u) =>
+      u.userId === resolvedAdmin.userId ? resolvedAdmin : u
     );
+    this.saveUsers(updatedUsers);
+    this.setCurrentUser(resolvedAdmin);
 
-    if (idx !== -1) {
-      users[idx] = {
-        ...users[idx],
-        role: designatedRole,
-        isMainAdmin: false,
-      };
-    } else {
-      users.push(resolvedUser);
-    }
-    this.saveUsers(users);
-    this.setCurrentUser(resolvedUser);
+    FirebaseSyncService.syncUserProfile(resolvedAdmin).catch(() => {});
 
     this.logActivity({
-      userId: resolvedUser.userId,
-      userDisplayName: resolvedUser.displayName,
-      role: resolvedUser.role,
-      action: 'FIREBASE_GOOGLE_LOGIN',
+      userId: resolvedAdmin.userId,
+      userDisplayName: resolvedAdmin.displayName,
+      role: resolvedAdmin.role,
+      action: 'ADMIN_GOOGLE_LOGIN',
       module: 'Security',
-      description: `গুগল সাইন-ইন দিয়ে লগইন: ${resolvedUser.email || resolvedUser.displayName} [রোল: ${
-        resolvedUser.role === 'admin' ? 'সহকারী অ্যাডমিন' : 'সাধারণ সদস্য'
-      }]`,
+      description: `অ্যাডমিন গুগল সাইন-ইন দিয়ে লগইন করেছেন: ${resolvedAdmin.email} [রোল: ${resolvedAdmin.role}]`,
     });
 
-    return resolvedUser;
+    return resolvedAdmin;
+  }
+
+  /**
+   * Async verified Google Sign-In strictly for Admins (checks Firestore /admins and /users directly).
+   * Rejects all non-admin Gmail accounts without creating any user or registration_history record.
+   * When expectedTypedInput is supplied, also enforces strict correspondence with the typed Gmail/characters.
+   */
+  static async loginAdminWithGoogleFirebase(
+    user: {
+      uid: string;
+      email?: string | null;
+      displayName?: string | null;
+    },
+    expectedTypedInput?: string
+  ): Promise<{ success: boolean; user?: UserAccount; message: string }> {
+    const verification = await FirebaseSyncService.verifyAdminGoogleAccountInFirebase(
+      user,
+      this.getUsers(),
+      expectedTypedInput
+    );
+
+    if (!verification.authorized || !verification.user) {
+      return {
+        success: false,
+        message: verification.message,
+      };
+    }
+
+    const adminUser = verification.user;
+    if (!isStrictMainAdmin(adminUser)) {
+      const users = this.getUsers();
+      const idx = users.findIndex(
+        (u) =>
+          u.userId === adminUser.userId ||
+          (u.email && adminUser.email && u.email.toLowerCase().trim() === adminUser.email.toLowerCase().trim())
+      );
+      if (idx !== -1) {
+        users[idx] = { ...users[idx], ...adminUser, isMainAdmin: false };
+      } else {
+        users.push({ ...adminUser, isMainAdmin: false });
+      }
+      this.saveUsers(users);
+    }
+
+    this.setCurrentUser(adminUser);
+
+    this.logActivity({
+      userId: adminUser.userId,
+      userDisplayName: adminUser.displayName,
+      role: adminUser.role,
+      action: isStrictMainAdmin(adminUser) ? 'MAIN_ADMIN_GOOGLE_LOGIN' : 'ADMIN_GOOGLE_LOGIN',
+      module: 'Security',
+      description: `${
+        isStrictMainAdmin(adminUser) ? 'প্রধান সুপার অ্যাডমিন' : 'অ্যাডমিন'
+      } গুগল সাইন-ইন দিয়ে লগইন করেছেন: ${adminUser.email}`,
+    });
+
+    return {
+      success: true,
+      user: adminUser,
+      message: verification.message,
+    };
   }
 
   // --- Settings ---
@@ -4193,6 +4281,10 @@ export class StorageService {
       throw new Error('শুধুমাত্র প্রধান অ্যাডমিন নতুন অ্যাডমিন বা ব্যবহারকারী যোগ করতে পারবেন। (Only the Main Admin can add admins.)');
     }
 
+    if (role === 'member') {
+      throw new Error('সাধারণ সদস্যরা শুধুমাত্র মোবাইল নম্বর দিয়ে নিবন্ধন করবেন। জিমেইল অ্যাকাউন্ট শুধুমাত্র অ্যাডমিনদের জন্য নির্ধারিত।');
+    }
+
     const users = this.getUsers();
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
@@ -4279,6 +4371,14 @@ export class StorageService {
       return {
         success: false,
         message: 'শুধুমাত্র প্রধান অ্যাডমিন নতুন অ্যাডমিন যোগ করতে পারবেন। (Only the Main Admin is permitted to add admins.)',
+        data: this.getAppData(),
+      };
+    }
+
+    if (role === 'member') {
+      return {
+        success: false,
+        message: 'সাধারণ সদস্যরা শুধুমাত্র মোবাইল নম্বর দিয়ে নিবন্ধন করতে পারবেন। জিমেইল অ্যাকাউন্ট শুধুমাত্র অ্যাডমিনদের জন্য নির্ধারিত।',
         data: this.getAppData(),
       };
     }

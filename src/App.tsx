@@ -12,7 +12,7 @@ import {
 } from './types';
 import { StorageService, MAIN_ADMIN_EMAIL, isStrictMainAdmin } from './lib/storage';
 import { GoogleSheetsService, syncViaAppsScriptWebhook } from './lib/sheetsService';
-import { getAccessToken, initAuth } from './lib/firebase';
+import { getAccessToken, initAuth, firebaseLogout } from './lib/firebase';
 import { FirebaseSyncService } from './lib/firebaseSync';
 import { getTranslation } from './lib/translations';
 import { Header } from './components/Header';
@@ -250,17 +250,23 @@ export default function App() {
     }
   }, [theme]);
 
-  // 3. Listen to Firebase Authentication state for Admin access
+  // 3. Listen to Firebase Authentication state — Google Sign-In is exclusively for authorized Admins
   useEffect(() => {
-    const unsubscribe = initAuth((firebaseUser) => {
+    const unsubscribe = initAuth(async (firebaseUser) => {
       if (firebaseUser) {
-        // Only trigger admin login if it is a real Google account, not internal synthetic member phone login
+        // Only evaluate real Google / email accounts, not internal synthetic member phone login (@member.pakura.org)
         const email = (firebaseUser.email || '').toLowerCase().trim();
-        const isSyntheticMember = email.endsWith('@member.pakura.org') || email.includes('member.pakura.org');
+        const isSyntheticMember =
+          email.endsWith('@member.pakura.org') || email.includes('member.pakura.org');
         if (!isSyntheticMember && email) {
-          const adminUser = StorageService.loginAdminWithFirebase(firebaseUser);
-          setCurrentUser(adminUser);
-          setAppData(StorageService.getAppData());
+          const authRes = await StorageService.loginAdminWithGoogleFirebase(firebaseUser);
+          if (authRes.success && authRes.user) {
+            setCurrentUser(authRes.user);
+            setAppData(StorageService.getAppData());
+          } else {
+            // Non-admin Google account is strictly prohibited — sign it out immediately
+            await firebaseLogout().catch(() => {});
+          }
         }
       }
     });
@@ -327,6 +333,9 @@ export default function App() {
             }).catch(() => {});
           }
         }
+
+        // Ensure all existing & new users/admins in Firebase have a registration_history record
+        FirebaseSyncService.syncAllExistingUsersToRegistrationHistory().catch(() => {});
       } catch (err) {
         console.warn('Firestore cloud sync notice:', err);
       }
@@ -399,6 +408,7 @@ export default function App() {
 
   // Logout back to view-only mode for dashboard
   const handleLogout = () => {
+    firebaseLogout().catch(() => {});
     const visitor = StorageService.logout();
     setCurrentUser(visitor);
     setAppData(StorageService.getAppData());

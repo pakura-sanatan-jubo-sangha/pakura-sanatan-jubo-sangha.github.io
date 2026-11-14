@@ -165,12 +165,12 @@ export const UsersView: React.FC<UsersViewProps> = ({
               <Shield className="w-6 h-6" />
             </div>
             <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-              {language === 'bn' ? 'কোনো সাধারণ অ্যাডমিন বা সদস্য যোগ করা হয়নি' : 'No General Admins or Members Added Yet'}
+              {language === 'bn' ? 'কোনো সাধারণ অ্যাডমিন যোগ করা হয়নি' : 'No General Admins Added Yet'}
             </h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 max-w-md mx-auto leading-relaxed">
               {language === 'bn'
-                ? 'আপনি প্রধান অ্যাডমিন হিসেবে একক নিয়ন্ত্রণে আছেন। অন্য ব্যক্তির জন্য জিমেইল/ইমেইল ও অস্থায়ী পাসওয়ার্ড দিয়ে সাধারণ অ্যাডমিন বা সদস্য একাউন্ট তৈরি করতে উপরের "ব্যবহারকারী যোগ করুন" বোতাম ব্যবহার করুন।'
-                : 'You have exclusive Main Admin control. Click "+ Add User" above to create an account for another person with a temporary password.'}
+                ? 'আপনি প্রধান অ্যাডমিন হিসেবে একক নিয়ন্ত্রণে আছেন। অন্য ব্যক্তির জন্য জিমেইল ও অস্থায়ী পাসওয়ার্ড দিয়ে অ্যাডমিন একাউন্ট তৈরি করতে উপরের "ব্যবহারকারী যোগ করুন" বোতাম ব্যবহার করুন (সাধারণ সদস্যগণ শুধুমাত্র মোবাইল নম্বর দিয়ে নিবন্ধন করবেন)।'
+                : 'You have exclusive Main Admin control. Click "+ Add User" above to create an Admin account with Gmail and temporary password (regular members register using only their phone numbers).'}
             </p>
             {isMainAdmin && (
               <button
@@ -399,8 +399,12 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   <option value="president">{t.rolePresident} (সভাপতি / President)</option>
                   <option value="treasurer">{t.roleTreasurer} (কোষাধ্যক্ষ / Treasurer)</option>
                   <option value="secretary">{t.roleSecretary} (সাধারণ সম্পাদক / Secretary)</option>
-                  <option value="member">{t.roleMember} (সাধারণ সদস্য / Member)</option>
                 </select>
+                <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-1">
+                  {language === 'bn'
+                    ? 'ℹ️ জিমেইল ও Google Sign-In শুধুমাত্র অ্যাডমিনদের জন্য। সাধারণ সদস্যগণ শুধুমাত্র মোবাইল নম্বর দিয়ে নিবন্ধন করবেন।'
+                    : 'ℹ️ Gmail & Google Sign-In are exclusively for Admins. Regular members register with phone numbers only.'}
+                </p>
               </div>
 
               <div>
@@ -417,8 +421,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 />
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                   {language === 'bn'
-                    ? '💡 তিনি এই জিমেইল ও অস্থায়ী পাসওয়ার্ড দিয়ে লগইন করে পরবর্তীতে নিজের ইচ্ছামতো নতুন পাসওয়ার্ড সেট করে নিতে পারবেন।'
-                    : '💡 They will log in with this email and temporary password, then change it to one of their own choosing.'}
+                    ? '💡 তিনি এই জিমেইল ও অস্থায়ী পাসওয়ার্ড অথবা Google Sign-In দিয়ে লগইন করতে পারবেন এবং পরে পাসওয়ার্ড পরিবর্তন করতে পারবেন।'
+                    : '💡 They can log in with this Gmail and temporary password or using Sign in with Google.'}
                 </p>
               </div>
 
@@ -470,7 +474,6 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   <option value="president">{t.rolePresident} (President)</option>
                   <option value="treasurer">{t.roleTreasurer} (Treasurer)</option>
                   <option value="secretary">{t.roleSecretary} (Secretary)</option>
-                  <option value="member">{t.roleMember} (Member)</option>
                 </select>
                 {isTargetMainAdmin(editingUser) && (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">

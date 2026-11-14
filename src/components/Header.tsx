@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UserAccount, Language, Theme } from '../types';
 import { getTranslation } from '../lib/translations';
-import { StorageService, isStrictMainAdmin } from '../lib/storage';
-import { FirebaseSyncService } from '../lib/firebaseSync';
+import { StorageService, isStrictMainAdmin, MAIN_ADMIN_EMAIL } from '../lib/storage';
+import {
+  FirebaseSyncService,
+  RegisteredAdminAccount,
+  verifyTypedEmailMatchesAdminGmail,
+} from '../lib/firebaseSync';
 import { EnrichedNotification } from '../lib/notifications';
 import {
   googleSignIn,
+  firebaseLogout,
   formatFirebaseAuthError,
 } from '../lib/firebase';
 import {
@@ -112,22 +117,88 @@ export const Header: React.FC<HeaderProps> = ({
     if (isOpenLoginModal) {
       setLoginError(null);
       setLoginSuccessMsg(null);
+      setAdminEmail('');
+      setAdminPasswordInput('');
       setShowAdminLoginModal(true);
     }
   }, [isOpenLoginModal]);
 
   const closeLoginModal = () => {
     setShowAdminLoginModal(false);
+    setAdminEmail('');
+    setAdminPasswordInput('');
     if (onCloseLoginModal) onCloseLoginModal();
   };
 
-  // Form states - main admin email default
-  const [adminEmail, setAdminEmail] = useState('freelancerkajolchandradas@gmail.com');
+  // Form states - admin must enter a Gmail address before Google Sign-In appears
+  const [adminEmail, setAdminEmail] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginSuccessMsg, setLoginSuccessMsg] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [registeredAdmins, setRegisteredAdmins] = useState<RegisteredAdminAccount[]>([]);
+
+  useEffect(() => {
+    if (!showAdminLoginModal) return;
+
+    const PRIVILEGED_ROLES = new Set(['admin', 'president', 'treasurer', 'secretary']);
+    const seedMap = new Map<string, RegisteredAdminAccount>();
+    const mainLower = MAIN_ADMIN_EMAIL.toLowerCase();
+    seedMap.set(mainLower, {
+      userId: 'USR-MAIN-ADMIN',
+      email: MAIN_ADMIN_EMAIL,
+      name: 'Kajol Chandra Das',
+      displayName: 'Kajol Chandra Das ( Admin )',
+      role: 'admin',
+      isMainAdmin: true,
+    });
+    for (const u of StorageService.getUsers()) {
+      const emailLower = String(u.email || '').toLowerCase().trim();
+      const roleLower = String(u.role || '').toLowerCase().trim();
+      if (
+        !emailLower ||
+        !emailLower.includes('@') ||
+        emailLower.endsWith('@member.pakura.org') ||
+        !PRIVILEGED_ROLES.has(roleLower) ||
+        u.status === 'inactive' ||
+        emailLower === mainLower
+      ) {
+        continue;
+      }
+      seedMap.set(emailLower, {
+        userId: u.userId,
+        email: emailLower,
+        name: u.name || u.displayName || emailLower,
+        displayName: u.displayName || u.name || emailLower,
+        role: roleLower,
+        isMainAdmin: false,
+      });
+    }
+    setRegisteredAdmins(Array.from(seedMap.values()));
+
+    let cancelled = false;
+    FirebaseSyncService.fetchRegisteredAdminAccounts(StorageService.getUsers())
+      .then((admins) => {
+        if (!cancelled && admins.length > 0) {
+          setRegisteredAdmins(admins);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showAdminLoginModal]);
+
+  const trimmedAdminEmail = adminEmail.trim();
+  const isAdminEmailSearchCandidate =
+    trimmedAdminEmail.length >= 2 && /[a-zA-Z@._-]/.test(trimmedAdminEmail);
+  const canShowAdminGoogleSignIn =
+    isAdminEmailSearchCandidate &&
+    registeredAdmins.some((a) =>
+      verifyTypedEmailMatchesAdminGmail(trimmedAdminEmail, a.email)
+    );
 
   // Self-service admin/committee password change modal state
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -287,35 +358,43 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  // Handle Firebase Google Sign-In:
-  // "However, if someone logs in using 'Sign in with Google' as the main admin,
-  // they will simply be designated as a standard member—not an admin.
-  // They will only become an admin if I specifically set up their account with admin privileges beforehand;
-  // otherwise, they won't have admin status."
+  // Handle Firebase Google Sign-In — Exclusively for Authorized Admins with strict Gmail correspondence
   const handleGoogleSignInClick = async () => {
     setLoginError(null);
+    setLoginSuccessMsg(null);
+
+    if (!canShowAdminGoogleSignIn) {
+      setLoginError(
+        language === 'bn'
+          ? 'অ্যাডমিন প্যানেলে নিবন্ধিত সঠিক অ্যাডমিন জিমেইলের সাথে মিলে যাওয়া অক্ষর লিখলে তবেই গুগল সাইন-ইন সম্পন্ন করা যাবে।'
+          : 'Entered characters must correspond to a registered Admin Gmail in the Admin Panel.'
+      );
+      return;
+    }
+
     setIsAuthenticating(true);
     try {
       const res = await googleSignIn();
       if (res?.user) {
-        const designatedUser = StorageService.loginAdminWithFirebase(res.user);
-        if (designatedUser.role === 'admin') {
-          setLoginSuccessMsg(
-            language === 'bn'
-              ? `সহকারী অ্যাডমিন হিসেবে সফলভাবে প্রবেশ করেছেন (${designatedUser.email || designatedUser.displayName})!`
-              : `Logged in as Assistant Admin with Google (${designatedUser.email || designatedUser.displayName})!`
-          );
-        } else {
-          setLoginSuccessMsg(
-            language === 'bn'
-              ? `সাধারণ সদস্য হিসেবে গুগল সাইন-ইন সম্পন্ন হয়েছে (${designatedUser.email || designatedUser.displayName})। প্রধান অ্যাডমিন কর্তৃক পূর্বে সুবিধা প্রদান ছাড়া অ্যাডমিন হওয়া সম্ভব নয়।`
-              : `Signed in as Member (${designatedUser.email || designatedUser.displayName}). Admin privileges require prior assignment by the Main Admin.`
-          );
+        const authResult = await StorageService.loginAdminWithGoogleFirebase(
+          res.user,
+          trimmedAdminEmail
+        );
+        if (!authResult.success || !authResult.user) {
+          await firebaseLogout().catch(() => {});
+          setLoginError(authResult.message);
+          return;
         }
+        const adminUser = authResult.user;
+        setLoginSuccessMsg(
+          language === 'bn'
+            ? `${adminUser.isMainAdmin ? 'প্রধান অ্যাডমিন' : 'সহকারী অ্যাডমিন'} হিসেবে গুগল সাইন-ইন সম্পন্ন হয়েছে (${adminUser.email || adminUser.displayName})!`
+            : `Logged in as ${adminUser.isMainAdmin ? 'Main Admin' : adminUser.role} with Google (${adminUser.email || adminUser.displayName})!`
+        );
         setTimeout(() => {
           setShowAdminLoginModal(false);
           onAdminLoginSuccess();
-        }, 800);
+        }, 700);
       }
     } catch (err: any) {
       if (err?.message === 'POPUP_BLOCKED') {
@@ -379,7 +458,13 @@ export const Header: React.FC<HeaderProps> = ({
                   if (onOpenLogin) onOpenLogin();
                   else if (onOpenMemberLogin) onOpenMemberLogin();
                   else if (onOpenAdminLogin) onOpenAdminLogin();
-                  else setShowAdminLoginModal(true);
+                  else {
+                    setLoginError(null);
+                    setLoginSuccessMsg(null);
+                    setAdminEmail('');
+                    setAdminPasswordInput('');
+                    setShowAdminLoginModal(true);
+                  }
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer transform hover:scale-[1.02] active:scale-[0.98]"
               >
@@ -643,8 +728,8 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Policy Info Box */}
             <div className="mt-3 p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 text-[11px] text-amber-800 dark:text-amber-300/90 leading-relaxed">
               {language === 'bn'
-                ? '🔒 সাধারণ দর্শক ও সদস্যদের জন্য ড্যাশবোর্ডটি শুধু দেখার সুবিধাসম্পন্ন (View-Only)। সমিতি পরিচালনা ও ডাটা ব্যবস্থাপনার জন্য শুধুমাত্র অনুমোদিত প্রধান অ্যাডমিন জিমেইল ও পাসওয়ার্ড দিয়ে লগইন করতে পারবেন।'
-                : '🔒 The website is view-only for general visitors. Only authorized Admin can log in to manage society data, member savings, and records.'}
+                ? '🔒 শুধুমাত্র অনুমোদিত অ্যাডমিনগণ জিমেইল + পাসওয়ার্ড অথবা Google Sign-In দিয়ে লগইন করতে পারবেন। সাধারণ সদস্যদের জন্য গুগল সাইন-ইন অনুমোদিত নয় (সদস্যরা শুধুমাত্র মোবাইল নম্বর দিয়ে লগইন করবেন)।'
+                : '🔒 Only authorized Admins can log in using Gmail + Password or Sign in with Google. Regular members must log in using only their phone numbers.'}
             </div>
 
             {/* Credentials Form */}
@@ -659,7 +744,11 @@ export const Header: React.FC<HeaderProps> = ({
                     required
                     value={adminEmail}
                     onChange={(e) => setAdminEmail(e.target.value)}
-                    placeholder="freelancerkajolchandradas@gmail.com বা আপনার ইমেইল"
+                    placeholder={
+                      language === 'bn'
+                        ? 'আপনার অ্যাডমিন জিমেইল লিখুন (যেমন: admin@gmail.com)'
+                        : 'Enter your admin Gmail address'
+                    }
                     className="w-full pl-9 pr-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
                   />
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -694,35 +783,41 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               </div>
 
-              {/* Google Sign In option */}
-              <div className="pt-1">
-                <button
-                  type="button"
-                  disabled={isAuthenticating}
-                  onClick={handleGoogleSignInClick}
-                  className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 transition-all cursor-pointer"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
-                  <span>{language === 'bn' ? 'Google একাউন্ট দিয়ে সাইন-ইন' : 'Sign in with Google'}</span>
-                </button>
-              </div>
+              {/* Google Sign In option — visible ONLY once a matching Admin Gmail address is entered */}
+              {canShowAdminGoogleSignIn && (
+                <div className="pt-1 animate-in fade-in duration-150">
+                  <button
+                    type="button"
+                    disabled={isAuthenticating}
+                    onClick={handleGoogleSignInClick}
+                    className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                      />
+                    </svg>
+                    <span>
+                      {language === 'bn'
+                        ? 'Google দিয়ে অ্যাডমিন সাইন-ইন'
+                        : 'Sign in with Google'}
+                    </span>
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button

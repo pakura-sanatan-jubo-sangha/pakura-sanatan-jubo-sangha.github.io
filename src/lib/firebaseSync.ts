@@ -57,6 +57,25 @@ import {
   Transaction,
 } from '../types';
 
+export interface RegisteredAdminAccount {
+  userId: string;
+  email: string;
+  name: string;
+  displayName: string;
+  role: string;
+  isMainAdmin: boolean;
+}
+
+export function verifyTypedEmailMatchesAdminGmail(
+  typedInput: string,
+  actualAdminEmail: string
+): boolean {
+  const cleanTyped = (typedInput || '').toLowerCase().trim();
+  const cleanActual = (actualAdminEmail || '').toLowerCase().trim();
+  if (!cleanTyped || !cleanActual) return false;
+  return cleanActual.includes(cleanTyped);
+}
+
 /**
  * Helper to normalize phone numbers for Firebase Auth email mapping
  */
@@ -117,6 +136,17 @@ function extractNormalizedDigits(text?: string): string {
   return s.replace(/\D/g, '');
 }
 
+function isGmailLinkedMemberAccount(u: any): boolean {
+  if (!u) return false;
+  const email = String(u?.email || '').toLowerCase().trim();
+  if (!email || email.endsWith('@member.pakura.org')) return false;
+  const role = String(u?.role || 'member').toLowerCase().trim();
+  const userId = String(u?.userId || '').trim();
+  if (userId === 'USR-MAIN-ADMIN') return false;
+  if (['admin', 'president', 'treasurer', 'secretary'].includes(role)) return false;
+  return role === 'member';
+}
+
 function isPlaceholderMemberSkeletonUser(
   u: any,
   docId: string,
@@ -168,6 +198,9 @@ export class FirebaseSyncService {
    * Save or update an authenticated user profile in Firestore (/users/{userId})
    */
   static async syncUserProfile(user: UserAccount): Promise<void> {
+    if (isGmailLinkedMemberAccount(user)) {
+      return;
+    }
     const path = `users/${user.userId}`;
     try {
       const userRef = doc(db, 'users', user.userId);
@@ -192,6 +225,15 @@ export class FirebaseSyncService {
         },
         { merge: true }
       );
+
+      // Also persist permanent registration_history for every real user or admin (skip empty USR-M-SYS-* skeletons)
+      const isSkeletonPlaceholder = isPlaceholderMemberSkeletonUser(user, user.userId, new Set());
+      if (!isSkeletonPlaceholder) {
+        await this.syncUserRegistrationHistoryInFirebase(
+          { ...user, isMainAdmin: isMain },
+          { source: isMain ? 'main_admin_sync' : user.role === 'member' ? 'user_profile_sync' : 'admin_profile_sync' }
+        ).catch(() => {});
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
@@ -304,7 +346,18 @@ export class FirebaseSyncService {
         await deleteDoc(doc(db, 'admins', user.userId)).catch(() => {});
       }
 
-      // 3. Keep permanent audit record in /activity_logs
+      // 3. Record permanent registration_history for the new admin/committee user
+      await this.syncUserRegistrationHistoryInFirebase(
+        {
+          ...user,
+          firebaseUid: effectiveUid,
+          email: cleanEmail,
+          isMainAdmin: false,
+        },
+        { source: 'admin_creation' }
+      ).catch(() => {});
+
+      // 4. Keep permanent audit record in /activity_logs
       await this.syncActivityLog({
         logId: `LOG-ADM-${Date.now()}`,
         dateTime: new Date().toLocaleString('bn-BD'),
@@ -484,7 +537,18 @@ export class FirebaseSyncService {
       // 4. Update Firebase Auth password if currently authenticated as this email
       await firebaseUpdateUserPassword(cleanPass, cleanEmail || undefined);
 
-      // 5. Record password change audit log in Firestore /activity_logs
+      // 5. Ensure admin registration_history is stored/updated in Firebase
+      await this.syncUserRegistrationHistoryInFirebase(
+        {
+          ...user,
+          userId: targetUserId,
+          email: cleanEmail,
+          isMainAdmin: Boolean(isMainAdmin),
+        },
+        { source: isMainAdmin ? 'main_admin_sync' : 'admin_password_update' }
+      ).catch(() => {});
+
+      // 6. Record password change audit log in Firestore /activity_logs
       await this.syncActivityLog({
         logId: `LOG-PWD-${Date.now()}`,
         dateTime: new Date().toLocaleString('bn-BD'),
@@ -798,6 +862,397 @@ export class FirebaseSyncService {
   }
 
   /**
+   * Fetch all active registered Admin accounts from Firebase (/admins and privileged /users,
+   * always including the Main Super Admin) merged with local active admins for partial matching.
+   */
+  static async fetchRegisteredAdminAccounts(
+    localUsers: UserAccount[] = []
+  ): Promise<RegisteredAdminAccount[]> {
+    const PRIVILEGED_ROLES = new Set(['admin', 'president', 'treasurer', 'secretary']);
+    const adminMap = new Map<string, RegisteredAdminAccount>();
+
+    const mainEmailLower = MAIN_ADMIN_EMAIL_CONST.toLowerCase();
+    adminMap.set(mainEmailLower, {
+      userId: 'USR-MAIN-ADMIN',
+      email: MAIN_ADMIN_EMAIL_CONST,
+      name: 'Kajol Chandra Das',
+      displayName: 'Kajol Chandra Das ( Admin )',
+      role: 'admin',
+      isMainAdmin: true,
+    });
+
+    // Seed with active privileged local users
+    for (const u of localUsers) {
+      const emailLower = String(u.email || '').toLowerCase().trim();
+      const roleLower = String(u.role || '').toLowerCase().trim();
+      if (
+        !emailLower ||
+        !emailLower.includes('@') ||
+        emailLower.endsWith('@member.pakura.org') ||
+        !PRIVILEGED_ROLES.has(roleLower) ||
+        u.status === 'inactive'
+      ) {
+        continue;
+      }
+      if (emailLower === mainEmailLower) continue;
+      adminMap.set(emailLower, {
+        userId: u.userId,
+        email: emailLower,
+        name: u.name || u.displayName || emailLower,
+        displayName: u.displayName || u.name || emailLower,
+        role: roleLower,
+        isMainAdmin: false,
+      });
+    }
+
+    try {
+      const [adminsSnap, usersSnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'admins')).catch(() => getDocs(collection(db, 'admins'))),
+        getDocsFromServer(collection(db, 'users')).catch(() => getDocs(collection(db, 'users'))),
+      ]);
+
+      usersSnap.forEach((d) => {
+        const u = d.data() as any;
+        const emailLower = String(u?.email || '').toLowerCase().trim();
+        const roleLower = String(u?.role || '').toLowerCase().trim();
+        if (!emailLower || !emailLower.includes('@') || emailLower.endsWith('@member.pakura.org')) {
+          return;
+        }
+        if (emailLower === mainEmailLower) {
+          const prev = adminMap.get(mainEmailLower)!;
+          adminMap.set(mainEmailLower, {
+            ...prev,
+            name: u?.name || prev.name,
+            displayName: u?.displayName || prev.displayName,
+          });
+          return;
+        }
+        if (!PRIVILEGED_ROLES.has(roleLower)) {
+          adminMap.delete(emailLower);
+          return;
+        }
+        if (String(u?.status || 'active').toLowerCase() === 'inactive') {
+          adminMap.delete(emailLower);
+          return;
+        }
+        adminMap.set(emailLower, {
+          userId: String(u?.userId || d.id),
+          email: emailLower,
+          name: String(u?.name || u?.displayName || emailLower),
+          displayName: String(u?.displayName || u?.name || emailLower),
+          role: roleLower,
+          isMainAdmin: false,
+        });
+      });
+
+      adminsSnap.forEach((d) => {
+        const a = d.data() as any;
+        const emailLower = String(a?.email || '').toLowerCase().trim();
+        const roleLower = String(a?.role || 'admin').toLowerCase().trim();
+        if (!emailLower || !emailLower.includes('@') || emailLower.endsWith('@member.pakura.org')) {
+          return;
+        }
+        if (emailLower === mainEmailLower) {
+          const prev = adminMap.get(mainEmailLower)!;
+          adminMap.set(mainEmailLower, {
+            ...prev,
+            name: a?.name || prev.name,
+            displayName: a?.displayName || prev.displayName,
+          });
+          return;
+        }
+        if (!PRIVILEGED_ROLES.has(roleLower) || String(a?.status || 'active').toLowerCase() === 'inactive') {
+          adminMap.delete(emailLower);
+          return;
+        }
+        adminMap.set(emailLower, {
+          userId: String(a?.userId || d.id),
+          email: emailLower,
+          name: String(a?.name || a?.displayName || emailLower),
+          displayName: String(a?.displayName || a?.name || emailLower),
+          role: roleLower,
+          isMainAdmin: false,
+        });
+      });
+    } catch (err) {
+      console.warn('Could not refresh registered admins from Firestore:', err);
+    }
+
+    return Array.from(adminMap.values()).sort((a, b) => {
+      if (a.isMainAdmin && !b.isMainAdmin) return -1;
+      if (!a.isMainAdmin && b.isMainAdmin) return 1;
+      return a.email.localeCompare(b.email);
+    });
+  }
+
+  /**
+   * Verify a Google Sign-In user strictly against authorized Admins (Main Admin or pre-configured Committee/Assistant Admins).
+   * Regular members are NEVER permitted to log in or create accounts using Google Sign-In.
+   * When expectedTypedInput is provided, also enforces that the characters/Gmail typed in the login field
+   * strictly correspond to the actual registered Admin Gmail returned by Google.
+   */
+  static async verifyAdminGoogleAccountInFirebase(
+    firebaseUser: { uid: string; email?: string | null; displayName?: string | null },
+    localUsers: UserAccount[] = [],
+    expectedTypedInput?: string
+  ): Promise<{ authorized: boolean; user?: UserAccount; message: string }> {
+    const emailLower = (firebaseUser.email || '').toLowerCase().trim();
+    const PRIVILEGED_ROLES = new Set(['admin', 'president', 'treasurer', 'secretary']);
+
+    if (!emailLower || emailLower.endsWith('@member.pakura.org')) {
+      return {
+        authorized: false,
+        message:
+          'গুগল সাইন-ইন শুধুমাত্র অনুমোদিত অ্যাডমিনদের জন্য সংরক্ষিত। সাধারণ সদস্যরা শুধুমাত্র মোবাইল নম্বর দিয়ে লগইন করতে পারবেন। (Google Sign-In is exclusively for Admins.)',
+      };
+    }
+
+    if (expectedTypedInput !== undefined) {
+      const cleanTyped = (expectedTypedInput || '').trim();
+      if (!cleanTyped || !verifyTypedEmailMatchesAdminGmail(cleanTyped, emailLower)) {
+        return {
+          authorized: false,
+          message: `প্রবেশকৃত জিমেইল (${cleanTyped || 'খালি'}) আপনার নির্বাচিত গুগল অ্যাকাউন্ট (${emailLower}) এবং অ্যাডমিন প্যানেলে নিবন্ধিত প্রকৃত জিমেইলের সাথে মিলছে না! সঠিক অ্যাডমিন জিমেইল দিয়ে আবার চেষ্টা করুন।`,
+        };
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 1. Main Super Admin signing in with their registered Gmail via Google
+    if (emailLower === MAIN_ADMIN_EMAIL_CONST.toLowerCase()) {
+      let existingMain: any = null;
+      try {
+        const [adminSnap, userSnap] = await Promise.all([
+          getDocFromServer(doc(db, 'admins', 'USR-MAIN-ADMIN')).catch(() =>
+            getDoc(doc(db, 'admins', 'USR-MAIN-ADMIN'))
+          ),
+          getDocFromServer(doc(db, 'users', 'USR-MAIN-ADMIN')).catch(() =>
+            getDoc(doc(db, 'users', 'USR-MAIN-ADMIN'))
+          ),
+        ]);
+        existingMain = {
+          ...(userSnap.exists() ? userSnap.data() : {}),
+          ...(adminSnap.exists() ? adminSnap.data() : {}),
+        };
+      } catch {
+        // Offline / transient read error still honors strict Main Admin identity
+      }
+
+      const mainAdminUser: UserAccount = {
+        userId: 'USR-MAIN-ADMIN',
+        firebaseUid: firebaseUser.uid || existingMain?.firebaseUid || 'USR-MAIN-ADMIN',
+        username: existingMain?.username || 'kajol_admin',
+        email: MAIN_ADMIN_EMAIL_CONST,
+        name: existingMain?.name || 'Kajol Chandra Das',
+        displayName: existingMain?.displayName || 'Kajol Chandra Das ( Admin )',
+        role: 'admin',
+        isMainAdmin: true,
+        status: 'active',
+        createdAt: existingMain?.createdAt
+          ? String(existingMain.createdAt).split('T')[0]
+          : '2026-09-01',
+      };
+
+      try {
+        await setDoc(
+          doc(db, 'admins', 'USR-MAIN-ADMIN'),
+          {
+            uid: mainAdminUser.firebaseUid,
+            userId: 'USR-MAIN-ADMIN',
+            email: MAIN_ADMIN_EMAIL_CONST,
+            name: mainAdminUser.name,
+            displayName: mainAdminUser.displayName,
+            role: 'admin',
+            status: 'active',
+            isMainAdmin: true,
+            updatedAt: nowIso,
+          },
+          { merge: true }
+        );
+        await this.syncUserRegistrationHistoryInFirebase(mainAdminUser, {
+          source: 'main_admin_google_login',
+        });
+      } catch {
+        // Non-blocking cloud sync update
+      }
+
+      return {
+        authorized: true,
+        user: mainAdminUser,
+        message: `প্রধান সুপার অ্যাডমিন হিসেবে গুগল সাইন-ইন সম্পন্ন হয়েছে (${MAIN_ADMIN_EMAIL_CONST})!`,
+      };
+    }
+
+    // 2. Non-Main-Admin Gmail: strictly look up an active pre-configured Admin in /admins or privileged /users
+    let matchedAdmin: UserAccount | null = null;
+    try {
+      const [adminsSnap, usersSnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'admins')).catch(() => getDocs(collection(db, 'admins'))),
+        getDocsFromServer(collection(db, 'users')).catch(() => getDocs(collection(db, 'users'))),
+      ]);
+
+      adminsSnap.forEach((d) => {
+        const a = d.data() as any;
+        const aEmail = String(a?.email || '').toLowerCase().trim();
+        const aRole = String(a?.role || 'admin').toLowerCase().trim();
+        if (aEmail === emailLower && PRIVILEGED_ROLES.has(aRole)) {
+          const uid = String(a?.userId || d.id).trim();
+          matchedAdmin = {
+            userId: uid,
+            firebaseUid: firebaseUser.uid || a?.uid || uid,
+            username: a?.username || emailLower.split('@')[0],
+            email: emailLower,
+            name: a?.name || a?.displayName || firebaseUser.displayName || emailLower,
+            displayName: a?.displayName || a?.name || firebaseUser.displayName || emailLower,
+            role: aRole as any,
+            status: a?.status || 'active',
+            password: a?.password || '',
+            isMainAdmin: false,
+            createdAt: a?.createdAt
+              ? String(a.createdAt).split('T')[0]
+              : nowIso.split('T')[0],
+          };
+        }
+      });
+
+      if (!matchedAdmin) {
+        usersSnap.forEach((d) => {
+          const u = d.data() as any;
+          const uEmail = String(u?.email || '').toLowerCase().trim();
+          const uRole = String(u?.role || '').toLowerCase().trim();
+          if (uEmail === emailLower && PRIVILEGED_ROLES.has(uRole)) {
+            const uid = String(u?.userId || d.id).trim();
+            matchedAdmin = {
+              userId: uid,
+              firebaseUid: firebaseUser.uid || u?.firebaseUid || uid,
+              username: u?.username || emailLower.split('@')[0],
+              email: emailLower,
+              name: u?.name || u?.displayName || firebaseUser.displayName || emailLower,
+              displayName: u?.displayName || u?.name || firebaseUser.displayName || emailLower,
+              role: uRole as any,
+              status: u?.status || 'active',
+              password: u?.password || '',
+              isMainAdmin: false,
+              createdAt: u?.createdAt
+                ? String(u.createdAt).split('T')[0]
+                : nowIso.split('T')[0],
+            };
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Firestore admin Google lookup fallback to local store:', err);
+      const localMatch = localUsers.find(
+        (u) =>
+          (u.email || '').toLowerCase().trim() === emailLower &&
+          PRIVILEGED_ROLES.has(String(u.role || '').toLowerCase())
+      );
+      if (localMatch) {
+        matchedAdmin = {
+          ...localMatch,
+          firebaseUid: firebaseUser.uid || localMatch.firebaseUid || localMatch.userId,
+          isMainAdmin: false,
+        };
+      }
+    }
+
+    if (!matchedAdmin) {
+      return {
+        authorized: false,
+        message:
+          'গুগল সাইন-ইন ("Sign in with Google") শুধুমাত্র অনুমোদিত অ্যাডমিনদের জন্য! সাধারণ সদস্যরা গুগল দিয়ে অ্যাকাউন্ট তৈরি বা লগইন করতে পারবেন না — অনুগ্রহ করে আপনার মোবাইল নম্বর দিয়ে নিবন্ধন ও লগইন করুন। (Sign in with Google is exclusively for Admins. Regular members must register and log in using only their phone number.)',
+      };
+    }
+
+    if (matchedAdmin.status === 'inactive') {
+      return {
+        authorized: false,
+        message:
+          'আপনার অ্যাডমিন অ্যাকাউন্টটি বর্তমানে নিষ্ক্রিয় রয়েছে। প্রধান অ্যাডমিনের সাথে যোগাযোগ করুন।',
+      };
+    }
+
+    try {
+      await setDoc(
+        doc(db, 'admins', matchedAdmin.userId),
+        {
+          uid: firebaseUser.uid || matchedAdmin.userId,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      ).catch(() => {});
+      await setDoc(
+        doc(db, 'users', matchedAdmin.userId),
+        {
+          firebaseUid: firebaseUser.uid || matchedAdmin.userId,
+          lastSyncedAt: nowIso,
+        },
+        { merge: true }
+      ).catch(() => {});
+      await this.syncUserRegistrationHistoryInFirebase(matchedAdmin, {
+        source: 'admin_google_login',
+      });
+    } catch {
+      // Non-blocking sync
+    }
+
+    return {
+      authorized: true,
+      user: matchedAdmin,
+      message: `অ্যাডমিন হিসেবে গুগল সাইন-ইন সম্পন্ন হয়েছে (${matchedAdmin.email})!`,
+    };
+  }
+
+  /**
+   * Permanently delete any existing non-admin (member-role) accounts linked to Gmail addresses
+   * from Firestore /users and /registration_history while preserving Admins and phone-only members.
+   */
+  static async deleteAllGmailMemberAccountsInFirebase(): Promise<{
+    deletedUsers: number;
+    deletedHistory: number;
+  }> {
+    let deletedUsers = 0;
+    let deletedHistory = 0;
+    try {
+      const [usersSnap, historySnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'users')).catch(() => getDocs(collection(db, 'users'))),
+        getDocsFromServer(collection(db, 'registration_history')).catch(() =>
+          getDocs(collection(db, 'registration_history'))
+        ),
+      ]);
+
+      for (const uDoc of usersSnap.docs) {
+        const u = uDoc.data() as any;
+        if (isGmailLinkedMemberAccount({ ...u, userId: u?.userId || uDoc.id })) {
+          await deleteDoc(doc(db, 'users', uDoc.id));
+          deletedUsers++;
+        }
+      }
+
+      for (const hDoc of historySnap.docs) {
+        const h = hDoc.data() as any;
+        const email = String(h?.email || '').toLowerCase().trim();
+        const role = String(h?.role || 'member').toLowerCase().trim();
+        const accType = String(h?.accountType || 'member').toLowerCase().trim();
+        const isMemberGmail =
+          email.length > 0 &&
+          !email.endsWith('@member.pakura.org') &&
+          role === 'member' &&
+          accType === 'member' &&
+          !h?.isMainAdmin;
+        if (isMemberGmail) {
+          await deleteDoc(doc(db, 'registration_history', hDoc.id));
+          deletedHistory++;
+        }
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'users/registration_history');
+    }
+    return { deletedUsers, deletedHistory };
+  }
+
+  /**
    * Fetch all user accounts from Firestore
    */
   static async loadUsersFromFirestore(): Promise<UserAccount[]> {
@@ -806,7 +1261,7 @@ export class FirebaseSyncService {
       const snap = await getDocs(collection(db, 'users'));
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (d && d.userId) {
+        if (d && d.userId && !isGmailLinkedMemberAccount(d)) {
           users.push({
             userId: d.userId,
             firebaseUid: d.firebaseUid || d.userId,
@@ -920,11 +1375,15 @@ export class FirebaseSyncService {
         }
       }
 
-      // 3. Check /registration_history collection (immutable permanent registration trail)
+      // 3. Check /registration_history collection (immutable permanent registration trail for member accounts)
       if (historySnap) {
         historySnap.forEach((hDoc) => {
           const h = hDoc.data() as any;
           if (!h) return;
+          // Admin-only history records should not block separate member phone registrations
+          const isMemberHistory =
+            (!h.role || h.role === 'member') && h.accountType !== 'main_admin';
+          if (!isMemberHistory) return;
           const hSysId = String(h.memberSystemId || '').toUpperCase();
           const hSysIds: string[] = Array.isArray(h.memberSystemIds)
             ? h.memberSystemIds.map((x: any) => String(x).toUpperCase())
@@ -1064,6 +1523,111 @@ export class FirebaseSyncService {
   }
 
   /**
+   * Store or update permanent registration history in Firestore (/registration_history/{historyId})
+   * for any account: new or existing users, regular members, Google users, or admins.
+   */
+  static async syncUserRegistrationHistoryInFirebase(
+    user: Partial<UserAccount> & { userId: string },
+    options?: {
+      member?: Member;
+      matchedMembers?: Member[];
+      source?: string;
+      existingRegisteredAt?: string;
+    }
+  ): Promise<void> {
+    if (!user?.userId) return;
+
+    const cleanPhone = normalizePhoneForAuth(user.phone || options?.member?.phone || '');
+    const memberSystemId = (user.memberSystemId || options?.member?.systemId || '').trim();
+    const cleanEmail = (user.email || '').trim().toLowerCase();
+    const role = user.role || 'member';
+    const isMain = isStrictMainAdminAccount(user as UserAccount) || Boolean(user.isMainAdmin);
+    const isPrivileged =
+      isMain || ['admin', 'president', 'treasurer', 'secretary'].includes(role);
+    const accountType: 'main_admin' | 'admin' | 'member' = isMain
+      ? 'main_admin'
+      : isPrivileged
+      ? 'admin'
+      : 'member';
+
+    const safeUserId = String(user.userId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const historyId =
+      accountType === 'member' && cleanPhone && memberSystemId
+        ? `REG-${cleanPhone}-${memberSystemId}`
+        : `REG-USR-${safeUserId}`;
+
+    const path = `registration_history/${historyId}`;
+    try {
+      const historyRef = doc(db, 'registration_history', historyId);
+      let existingRegAt = options?.existingRegisteredAt;
+      if (!existingRegAt) {
+        try {
+          const existingSnap = await getDoc(historyRef);
+          if (existingSnap.exists()) {
+            existingRegAt = existingSnap.data()?.registeredAt;
+          }
+        } catch {
+          // Ignore pre-read issues
+        }
+      }
+
+      const nowIso = new Date().toISOString();
+      const registeredAt =
+        existingRegAt ||
+        (user as any).registeredAt ||
+        user.createdAt ||
+        nowIso;
+
+      const allIds = (options?.matchedMembers && options.matchedMembers.length > 0
+        ? options.matchedMembers.map((m) => m.systemId)
+        : memberSystemId
+        ? [memberSystemId]
+        : []);
+
+      const authEmail =
+        accountType === 'member' && cleanPhone
+          ? phoneToMemberAuthEmail(cleanPhone)
+          : cleanEmail;
+
+      const payload: Record<string, any> = {
+        historyId,
+        userId: user.userId,
+        firebaseUid: user.firebaseUid || user.userId,
+        email: cleanEmail,
+        phone: cleanPhone,
+        phoneLast10: cleanPhone ? cleanPhone.slice(-10) : '',
+        authEmail,
+        username: user.username || cleanPhone || (cleanEmail ? cleanEmail.split('@')[0] : user.userId),
+        role,
+        accountType,
+        isMainAdmin: isMain,
+        status: user.status || 'active',
+        memberSystemId,
+        name: user.name || options?.member?.name || user.displayName || cleanEmail || user.userId,
+        displayName: user.displayName || user.name || cleanEmail || user.userId,
+        memberName: options?.member?.name || user.name || user.displayName || '',
+        registeredAt,
+        syncedAt: nowIso,
+        source:
+          options?.source ||
+          (isMain
+            ? 'main_admin_account'
+            : isPrivileged
+            ? 'admin_account'
+            : 'member_registration'),
+      };
+
+      if (allIds.length > 0) {
+        payload.memberSystemIds = Array.from(new Set(allIds));
+      }
+
+      await setDoc(historyRef, payload, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  }
+
+  /**
    * Record permanent registration history in Firestore (/registration_history/{historyId})
    */
   static async recordRegistrationHistoryInFirebase(params: {
@@ -1073,36 +1637,149 @@ export class FirebaseSyncService {
     member: Member;
     matchedMembers?: Member[];
     source?: string;
+    user?: Partial<UserAccount>;
   }): Promise<void> {
-    const cleanPhone = normalizePhoneForAuth(params.phone);
-    const historyId = `REG-${cleanPhone}-${params.member.systemId}`;
-    const path = `registration_history/${historyId}`;
-    try {
-      const allIds = (params.matchedMembers && params.matchedMembers.length > 0
-        ? params.matchedMembers
-        : [params.member]
-      ).map((m) => m.systemId);
+    await this.syncUserRegistrationHistoryInFirebase(
+      {
+        ...(params.user || {}),
+        userId: params.userId,
+        firebaseUid: params.firebaseUid || params.user?.firebaseUid || params.userId,
+        phone: params.phone || params.member.phone,
+        role: params.user?.role || 'member',
+        memberSystemId: params.member.systemId,
+        name: params.user?.name || params.member.name,
+        displayName: params.user?.displayName || `${params.member.name} (সদস্য)`,
+        status: params.user?.status || 'active',
+      },
+      {
+        member: params.member,
+        matchedMembers: params.matchedMembers,
+        source: params.source || 'member_registration',
+      }
+    );
+  }
 
-      await setDoc(
-        doc(db, 'registration_history', historyId),
-        {
-          historyId,
-          phone: cleanPhone,
-          phoneLast10: cleanPhone.slice(-10),
-          authEmail: phoneToMemberAuthEmail(cleanPhone),
-          userId: params.userId,
-          firebaseUid: params.firebaseUid || params.userId,
-          memberSystemId: params.member.systemId,
-          memberSystemIds: Array.from(new Set(allIds)),
-          memberName: params.member.name,
-          registeredAt: new Date().toISOString(),
-          source: params.source || 'member_registration',
-        },
-        { merge: true }
-      );
+  /**
+   * Backfill and synchronize registration_history in Firestore for EVERY existing user and admin
+   * found in /users, /admins, and linked /members records (regular members + admins).
+   */
+  static async syncAllExistingUsersToRegistrationHistory(): Promise<{
+    syncedCount: number;
+    skippedSkeletons: number;
+  }> {
+    let syncedCount = 0;
+    let skippedSkeletons = 0;
+    try {
+      const [usersSnap, adminsSnap, membersSnap, historySnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'users')).catch(() => getDocs(collection(db, 'users'))),
+        getDocsFromServer(collection(db, 'admins')).catch(() => getDocs(collection(db, 'admins'))),
+        getDocsFromServer(collection(db, 'members')).catch(() => getDocs(collection(db, 'members'))),
+        getDocsFromServer(collection(db, 'registration_history')).catch(() =>
+          getDocs(collection(db, 'registration_history'))
+        ),
+      ]);
+
+      const memberBySysId = new Map<string, Member>();
+      membersSnap.forEach((mDoc) => {
+        const m = mDoc.data() as Member;
+        const sysId = (m?.systemId || mDoc.id || '').trim();
+        if (sysId) {
+          memberBySysId.set(sysId, { ...m, systemId: sysId });
+        }
+      });
+
+      const existingHistoryById = new Map<string, any>();
+      historySnap.forEach((hDoc) => {
+        existingHistoryById.set(hDoc.id, hDoc.data());
+      });
+
+      const accountsToSync = new Map<string, UserAccount>();
+
+      // 1. Collect all real users from /users (skipping empty skeletons and obsolete Gmail-linked members)
+      usersSnap.forEach((uDoc) => {
+        const u = uDoc.data() as any;
+        const userId = String(u?.userId || uDoc.id || '').trim();
+        if (!userId) return;
+
+        if (isGmailLinkedMemberAccount({ ...u, userId })) {
+          return;
+        }
+
+        const isSkeleton = isPlaceholderMemberSkeletonUser(u, uDoc.id, new Set());
+        const isPrivileged = u?.role && u.role !== 'member';
+        if (isSkeleton && !isPrivileged && !u?.isMainAdmin) {
+          skippedSkeletons++;
+          return;
+        }
+
+        accountsToSync.set(userId, {
+          ...(u as UserAccount),
+          userId,
+          firebaseUid: u?.firebaseUid || userId,
+          role: u?.role || 'member',
+          status: u?.status || 'active',
+          isMainAdmin: isStrictMainAdminAccount({ ...u, userId } as UserAccount) || Boolean(u?.isMainAdmin),
+        });
+      });
+
+      // 2. Collect / merge all administrators from /admins (including USR-MAIN-ADMIN)
+      adminsSnap.forEach((aDoc) => {
+        const a = aDoc.data() as any;
+        const userId = String(a?.userId || aDoc.id || '').trim();
+        if (!userId) return;
+
+        const prev = accountsToSync.get(userId);
+        accountsToSync.set(userId, {
+          ...(prev || {}),
+          userId,
+          firebaseUid: a?.uid || prev?.firebaseUid || userId,
+          email: a?.email || prev?.email || '',
+          username: prev?.username || (a?.email ? String(a.email).split('@')[0] : userId),
+          phone: prev?.phone || a?.phone || '',
+          name: a?.name || prev?.name || a?.displayName || a?.email || userId,
+          displayName: a?.displayName || prev?.displayName || a?.name || a?.email || userId,
+          role: a?.role || prev?.role || 'admin',
+          status: a?.status || prev?.status || 'active',
+          isMainAdmin:
+            Boolean(a?.isMainAdmin) ||
+            userId === 'USR-MAIN-ADMIN' ||
+            String(a?.email || '').toLowerCase().trim() === MAIN_ADMIN_EMAIL_CONST.toLowerCase(),
+          createdAt: a?.createdAt || prev?.createdAt || new Date().toISOString(),
+        } as UserAccount);
+      });
+
+      // 3. Ensure every collected user & admin has a complete registration_history document
+      for (const account of accountsToSync.values()) {
+        const memberRecord = account.memberSystemId
+          ? memberBySysId.get(account.memberSystemId)
+          : undefined;
+        const cleanPhone = normalizePhoneForAuth(account.phone || memberRecord?.phone || '');
+        const sysId = (account.memberSystemId || memberRecord?.systemId || '').trim();
+        const isPrivileged =
+          Boolean(account.isMainAdmin) ||
+          ['admin', 'president', 'treasurer', 'secretary'].includes(account.role);
+
+        const safeUserId = String(account.userId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const historyId =
+          !isPrivileged && cleanPhone && sysId
+            ? `REG-${cleanPhone}-${sysId}`
+            : `REG-USR-${safeUserId}`;
+
+        const existing = existingHistoryById.get(historyId);
+        // Write if missing or missing standardized fields (role, accountType, name)
+        if (!existing || !existing.role || !existing.accountType || !existing.name) {
+          await this.syncUserRegistrationHistoryInFirebase(account, {
+            member: memberRecord,
+            source: existing?.source || (account.isMainAdmin ? 'main_admin_backfill' : isPrivileged ? 'admin_backfill' : 'member_backfill'),
+            existingRegisteredAt: existing?.registeredAt,
+          });
+          syncedCount++;
+        }
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.warn('Backfill registration_history notice:', error);
     }
+    return { syncedCount, skippedSkeletons };
   }
 
   /**
@@ -1250,6 +1927,7 @@ export class FirebaseSyncService {
         member: targetMember,
         matchedMembers: linkedMembers,
         source: 'member_registration',
+        user: newUser,
       });
 
       await this.syncActivityLog({
@@ -1487,6 +2165,7 @@ export class FirebaseSyncService {
       member,
       matchedMembers: verification.matchedMembers,
       source: 'phone_auth_registration',
+      user: newUser,
     });
 
     await this.syncActivityLog({
@@ -2211,6 +2890,8 @@ export class FirebaseSyncService {
       for (const w of appData.memberWithdrawals || []) {
         await this.syncMemberWithdrawal(w);
       }
+      // 11. Backfill / verify registration_history for all existing Firebase users & admins
+      await this.syncAllExistingUsersToRegistrationHistory();
 
       return {
         success: true,
@@ -2291,7 +2972,7 @@ export class FirebaseSyncService {
       if (usersSnap.status === 'fulfilled') {
         usersSnap.value.forEach((d) => {
           const u = d.data() as any;
-          if (u?.userId) {
+          if (u?.userId && !isGmailLinkedMemberAccount(u)) {
             mergedUserMap.set(u.userId, {
               ...(u as UserAccount),
               isMainAdmin: isStrictMainAdminAccount(u as UserAccount),

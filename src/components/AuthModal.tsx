@@ -3,9 +3,14 @@ import { UserAccount, Language } from '../types';
 import { StorageService, normalizePhoneNumber, MAIN_ADMIN_EMAIL } from '../lib/storage';
 import {
   googleSignIn,
+  firebaseLogout,
   formatFirebaseAuthError,
 } from '../lib/firebase';
-import { FirebaseSyncService } from '../lib/firebaseSync';
+import {
+  FirebaseSyncService,
+  RegisteredAdminAccount,
+  verifyTypedEmailMatchesAdminGmail,
+} from '../lib/firebaseSync';
 import {
   LogIn,
   UserPlus,
@@ -17,10 +22,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Key,
-  Shield,
   X,
   ArrowRight,
-  UserCheck,
   Sparkles,
   Loader2,
   ShieldAlert,
@@ -77,6 +80,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [registeredAdmins, setRegisteredAdmins] = useState<RegisteredAdminAccount[]>([]);
+
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialMode === 'register' ? 'register' : 'login');
@@ -90,17 +95,68 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setRegCheckingFirebase(false);
       setRegLiveCheck(null);
       setIsSubmitting(false);
+
+      // Seed registered admins immediately from local active admins + Main Admin, then refresh from Firebase
+      const PRIVILEGED_ROLES = new Set(['admin', 'president', 'treasurer', 'secretary']);
+      const seedMap = new Map<string, RegisteredAdminAccount>();
+      const mainLower = MAIN_ADMIN_EMAIL.toLowerCase();
+      seedMap.set(mainLower, {
+        userId: 'USR-MAIN-ADMIN',
+        email: MAIN_ADMIN_EMAIL,
+        name: 'Kajol Chandra Das',
+        displayName: 'Kajol Chandra Das ( Admin )',
+        role: 'admin',
+        isMainAdmin: true,
+      });
+      for (const u of StorageService.getUsers()) {
+        const emailLower = String(u.email || '').toLowerCase().trim();
+        const roleLower = String(u.role || '').toLowerCase().trim();
+        if (
+          !emailLower ||
+          !emailLower.includes('@') ||
+          emailLower.endsWith('@member.pakura.org') ||
+          !PRIVILEGED_ROLES.has(roleLower) ||
+          u.status === 'inactive' ||
+          emailLower === mainLower
+        ) {
+          continue;
+        }
+        seedMap.set(emailLower, {
+          userId: u.userId,
+          email: emailLower,
+          name: u.name || u.displayName || emailLower,
+          displayName: u.displayName || u.name || emailLower,
+          role: roleLower,
+          isMainAdmin: false,
+        });
+      }
+      setRegisteredAdmins(Array.from(seedMap.values()));
+
+      let cancelled = false;
+      FirebaseSyncService.fetchRegisteredAdminAccounts(StorageService.getUsers())
+        .then((admins) => {
+          if (!cancelled && admins.length > 0) {
+            setRegisteredAdmins(admins);
+          }
+        })
+        .catch(() => {});
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [isOpen, initialMode]);
 
   // Real-time detection of input type in the unified Login section
   const trimmedId = loginIdentifier.trim();
   const isEmailInput = trimmedId.includes('@');
+  const isGmailInput = /^[^\s@]+@gmail\.com$/i.test(trimmedId);
   const cleanDigits = trimmedId.replace(/\D/g, '');
+  const hasNonSysLetters = /[a-zA-Z]/.test(trimmedId.replace(/^sys[-\s]*/i, ''));
 
   // Look up matching member for account number (e.g. SYS-000001) or phone number
   const matchingMemberForLogin = useMemo(() => {
-    if (!trimmedId || isEmailInput) return null;
+    if (!trimmedId || isEmailInput || hasNonSysLetters) return null;
     const members = StorageService.getMembers();
     const cleanPhone = normalizePhoneNumber(trimmedId);
     const lowerInput = trimmedId.toLowerCase();
@@ -119,10 +175,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return false;
       }) || null
     );
-  }, [trimmedId, isEmailInput]);
+  }, [trimmedId, isEmailInput, hasNonSysLetters]);
 
-  const isMemberInput = !isEmailInput && (Boolean(matchingMemberForLogin) || cleanDigits.length >= 3);
+  const isMemberInput =
+    !isEmailInput &&
+    !hasNonSysLetters &&
+    (Boolean(matchingMemberForLogin) || cleanDigits.length >= 3);
   const isPhoneInput = isMemberInput;
+  const isAdminEmailSearchQuery =
+    trimmedId.length >= 2 && !isMemberInput && /[a-zA-Z@._-]/.test(trimmedId);
+
+  const canShowGoogleSignIn = useMemo(() => {
+    if (!isAdminEmailSearchQuery) return false;
+    return registeredAdmins.some((a) =>
+      verifyTypedEmailMatchesAdminGmail(trimmedId, a.email)
+    );
+  }, [registeredAdmins, trimmedId, isAdminEmailSearchQuery]);
 
   // Live thorough Firebase history verification as user enters phone number in registration
   useEffect(() => {
@@ -476,21 +544,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // Handle Google Sign In for Admin
+  // Handle Google Sign In — Exclusively for Authorized Admins with strict Gmail correspondence
   const handleGoogleSignInClick = async () => {
     setErrorMsg(null);
+    setSuccessMsg(null);
+
+    if (!canShowGoogleSignIn) {
+      setErrorMsg(
+        language === 'bn'
+          ? 'অ্যাডমিন প্যানেলে নিবন্ধিত সঠিক অ্যাডমিন জিমেইলের সাথে মিলে যাওয়া অক্ষর লিখলে তবেই গুগল সাইন-ইন সম্পন্ন করা যাবে।'
+          : 'Entered characters must correspond to a registered Admin Gmail in the Admin Panel.'
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const res = await googleSignIn();
       if (res?.user) {
-        const designatedUser = StorageService.loginAdminWithFirebase(res.user);
+        const authResult = await StorageService.loginAdminWithGoogleFirebase(res.user, trimmedId);
+        if (!authResult.success || !authResult.user) {
+          await firebaseLogout().catch(() => {});
+          setErrorMsg(authResult.message);
+          return;
+        }
+        const adminUser = authResult.user;
         setSuccessMsg(
           language === 'bn'
-            ? `${designatedUser.role === 'admin' ? 'অ্যাডমিন' : 'সদস্য'} হিসেবে সফলভাবে প্রবেশ করেছেন (${designatedUser.email || designatedUser.displayName})!`
-            : `Signed in as ${designatedUser.role} with Google (${designatedUser.email || designatedUser.displayName})!`
+            ? `${adminUser.isMainAdmin ? 'প্রধান অ্যাডমিন' : 'অ্যাডমিন'} হিসেবে গুগল সাইন-ইন সম্পন্ন হয়েছে (${adminUser.email || adminUser.displayName})!`
+            : `Signed in as ${adminUser.isMainAdmin ? 'Main Admin' : adminUser.role} with Google (${adminUser.email || adminUser.displayName})!`
         );
         setTimeout(() => {
-          onSuccess(designatedUser);
+          onSuccess(adminUser);
           onClose();
         }, 500);
       }
@@ -573,7 +658,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }`}
           >
             <UserPlus className="w-4 h-4 text-emerald-600" />
-            <span>{language === 'bn' ? 'রেজিস্ট্রেশন (Registration)' : 'Registration'}</span>
+            <span>{language === 'bn' ? 'রেজিস্ট্রেশন' : 'Registration'}</span>
           </button>
         </div>
 
@@ -612,12 +697,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     </strong>
                     <div className="mt-1 space-y-0.5 text-[11px]">
                       <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-medium">
-                        <Phone className="w-3 h-3 text-emerald-600" />
-                        <span>{language === 'bn' ? 'মোবাইল নম্বর লিখলেই সদস্য অ্যাকাউন্টে প্রবেশ হবে।' : 'Phone number logs into Membre account.'}</span>
+                        <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <span>
+                          {language === 'bn'
+                            ? 'মোবাইল নম্বর লিখলেই সদস্য অ্যাকাউন্টে প্রবেশ হবে।'
+                            : 'Phone number logs into Membre account.'}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300">
-                        <Mail className="w-3 h-3 text-indigo-600" />
-                        <span>{language === 'bn' ? 'জিমেইল লিখলে অ্যাডমিন অ্যাকাউন্টে প্রবেশ হবে।' : 'Gmail address logs into Admin account.'}</span>
+                      <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 font-medium">
+                        <Mail className="w-3 h-3 text-indigo-600 shrink-0" />
+                        <span>
+                          {language === 'bn'
+                            ? 'জিমেইল লিখলে অ্যাডমিন অ্যাকাউন্টে প্রবেশ হবে।'
+                            : 'Gmail address logs into Admin account.'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -627,7 +720,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* Identifier Input (Phone or Gmail) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === 'bn' ? 'মোবাইল নম্বর অথবা জিমেইল (Phone or Gmail):' : 'Phone Number or Gmail Address:'}{' '}
+                  {language === 'bn' ? 'মোবাইল নম্বর অথবা জিমেইল :' : 'Phone Number or Gmail Address:'}{' '}
                   <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
@@ -650,39 +743,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   ) : (
                     <LogIn className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 transition-colors" />
                   )}
-                </div>
-
-                {/* Real-time Dynamic Detection Indicator */}
-                <div className="mt-2">
-                  {isEmailInput ? (
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 animate-in fade-in">
-                      <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>{language === 'bn' ? 'অ্যাডমিন অ্যাকাউন্ট শনাক্ত হয়েছে (Admin Account)' : 'Admin Account Detected'}</span>
-                    </div>
-                  ) : isPhoneInput ? (
-                    <div className="p-3 rounded-xl bg-emerald-50/90 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 space-y-1.5 animate-in fade-in">
-                      <div className="flex items-center justify-between flex-wrap gap-1">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                          <UserCheck className="w-4 h-4 text-emerald-600" />
-                          <span>
-                            {matchingMemberForLogin
-                              ? `${matchingMemberForLogin.name}`
-                              : language === 'bn' ? 'সদস্য একাউন্ট' : 'Member Account'}
-                          </span>
-                          {matchingMemberForLogin && (
-                            <span className="font-mono text-[11px] px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-bold">
-                              #{matchingMemberForLogin.systemId}
-                            </span>
-                          )}
-                        </div>
-                        {matchingMemberForLogin && (
-                          <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-mono">
-                            📱 {matchingMemberForLogin.phone}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               </div>
 
@@ -775,14 +835,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 )}
               </button>
 
-              {/* Google Sign-in Alternative for Admin */}
-              {isEmailInput && (
-                <div className="pt-1">
+              {/* Google Sign-in Exclusively for Admins — visible ONLY after a matching Admin Gmail address is entered */}
+              {canShowGoogleSignIn && (
+                <div className="pt-2 space-y-2 animate-in fade-in duration-150">
+                  <div className="relative flex items-center justify-center">
+                    <div className="border-t border-slate-200 dark:border-slate-700/80 w-full" />
+                    <span className="px-2.5 bg-white dark:bg-slate-900 text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                      {language === 'bn' ? 'শুধুমাত্র অ্যাডমিনদের জন্য • Admins Only' : 'For Admins Only'}
+                    </span>
+                    <div className="border-t border-slate-200 dark:border-slate-700/80 w-full" />
+                  </div>
                   <button
                     type="button"
                     onClick={handleGoogleSignInClick}
                     disabled={isSubmitting}
-                    className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full py-2.5 px-3 rounded-xl border border-indigo-200 dark:border-indigo-800/70 bg-indigo-50/40 dark:bg-indigo-950/20 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 24 24">
                       <path
@@ -802,25 +869,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                       />
                     </svg>
-                    <span>{language === 'bn' ? 'গুগল সাইন-ইন দিয়ে অ্যাডমিন প্রবেশ' : 'Sign in with Google'}</span>
+                    <span>
+                      {language === 'bn'
+                        ? 'Sign in with Google'
+                        : 'Sign in with Google'}
+                    </span>
                   </button>
                 </div>
               )}
-
-              {/* Link to Registration */}
-              <div className="text-center pt-1 text-xs text-slate-500">
-                <span>{language === 'bn' ? 'নতুন সদস্য? ' : 'New member? '}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('register');
-                    setErrorMsg(null);
-                  }}
-                  className="font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-                >
-                  {language === 'bn' ? 'এখানে সদস্য অ্যাকাউন্ট নিবন্ধন করুন' : 'Register here'}
-                </button>
-              </div>
             </form>
           )}
 
@@ -1026,21 +1082,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </>
                 )}
               </button>
-
-              {/* Link back to Login */}
-              <div className="text-center pt-2 text-xs text-slate-500">
-                <span>{language === 'bn' ? 'ইতিমধ্যে অ্যাকাউন্ট আছে? ' : 'Already registered? '}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('login');
-                    setErrorMsg(null);
-                  }}
-                  className="font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-                >
-                  {language === 'bn' ? 'লগইন করুন' : 'Log In'}
-                </button>
-              </div>
             </form>
           )}
         </div>

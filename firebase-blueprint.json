@@ -260,21 +260,30 @@
     },
     "RegistrationHistory": {
       "title": "RegistrationHistory",
-      "description": "Immutable member account registration history used to verify prior registrations in Firebase",
+      "description": "Immutable account registration history for all users (new and existing, regular members and admins) stored in Firebase",
       "type": "object",
       "properties": {
         "historyId": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "firebaseUid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 120 },
         "phone": { "type": "string", "maxLength": 30 },
         "phoneLast10": { "type": "string", "maxLength": 15 },
         "authEmail": { "type": "string", "maxLength": 120 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "firebaseUid": { "type": "string", "maxLength": 128 },
+        "username": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "president", "treasurer", "secretary", "member"] },
+        "accountType": { "type": "string", "enum": ["main_admin", "admin", "member"] },
+        "isMainAdmin": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "inactive", "pending"] },
         "memberSystemId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 100 },
+        "displayName": { "type": "string", "maxLength": 100 },
         "memberName": { "type": "string", "maxLength": 100 },
         "registeredAt": { "type": "string", "format": "date-time" },
+        "syncedAt": { "type": "string", "format": "date-time" },
         "source": { "type": "string", "maxLength": 50 }
       },
-      "required": ["historyId", "phone", "userId", "memberSystemId", "registeredAt"]
+      "required": ["historyId", "userId", "role", "registeredAt"]
     },
     "Settings": {
       "title": "Settings",
