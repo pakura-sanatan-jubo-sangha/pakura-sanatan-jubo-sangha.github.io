@@ -547,8 +547,8 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
 
             <p className="text-xs sm:text-sm text-emerald-100/90 max-w-xl leading-relaxed">
               {language === 'bn'
-                ? 'পাকুড়া সনাতন যুব সংঘের সাধারণ সদস্য পোর্টালে আপনার মোট স্থিতি, সভার হাজিরা ও নিরাপত্তা বিবরণী।'
-                : 'Your total aggregated balance, meeting attendance, and security portal.'}
+                ? ''
+                :''}
             </p>
           </div>
 
@@ -563,32 +563,9 @@ export const MemberDashboardView: React.FC<MemberDashboardViewProps> = ({
                 ৳{aggregatedBalance.toLocaleString()}
               </div>
               <span className="text-[10px] text-emerald-100/80 mt-0.5 block">
-                {language === 'bn' ? 'সঞ্চয় মূলধন স্থিতি' : 'Personal savings capital'}
+                {language === 'bn' ? '' : ''}
               </span>
             </div>
-
-            {/* Attendance Button (Prominent Action) */}
-            <button
-              type="button"
-              onClick={() => setShowAttendanceModal(true)}
-              className={`px-4 py-3.5 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md transform hover:scale-105 active:scale-95 ${
-                isAlreadyMarkedPresent
-                  ? 'bg-emerald-400/30 text-white border border-emerald-300/40 hover:bg-emerald-400/40'
-                  : 'bg-white text-emerald-800 hover:bg-emerald-50 shadow-emerald-950/20'
-              }`}
-            >
-              <CheckCircle2 className={`w-4 h-4 ${isAlreadyMarkedPresent ? 'text-emerald-200' : 'text-emerald-600'}`} />
-              <div className="text-left">
-                <span className="block text-[10px] uppercase tracking-wide opacity-80 leading-none">
-                  {language === 'bn' ? 'সভার হাজিরা' : 'Meeting'}
-                </span>
-                <span className="block text-xs font-bold leading-tight mt-0.5">
-                  {isAlreadyMarkedPresent
-                    ? (language === 'bn' ? 'হাজিরা সম্পন্ন ✓' : 'Marked Present ✓')
-                    : (language === 'bn' ? 'উপস্থিতি নিশ্চিত করুন' : 'Mark Attendance')}
-                </span>
-              </div>
-            </button>
           </div>
         </div>
       </div>
