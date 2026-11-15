@@ -212,11 +212,11 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
   // Multi-account filter: 'all_my', or specific systemId
   const [selectedAccountFilter, setSelectedAccountFilter] = useState<string>('all_my');
 
-  // Deduplicate receipts strictly so no two items/cards ever show for the same receipt or transaction
+  // Deduplicate receipts strictly and sort in sequential order (1, 2, 3, ...)
   const uniqueReceipts = useMemo(() => {
     const seenReceiptIds = new Set<string>();
     const seenTxnIds = new Set<string>();
-    return receipts.filter((r) => {
+    const deduped = receipts.filter((r) => {
       if (!r || !r.receiptId) return false;
       if (seenReceiptIds.has(r.receiptId)) return false;
       if (r.transactionId && seenTxnIds.has(r.transactionId)) return false;
@@ -224,6 +224,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
       if (r.transactionId) seenTxnIds.add(r.transactionId);
       return true;
     });
+    return StorageService.sortReceiptsSequentially(deduped);
   }, [receipts]);
 
   const myReceipts = useMemo(() => {

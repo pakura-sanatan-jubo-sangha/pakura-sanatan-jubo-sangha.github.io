@@ -171,7 +171,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
               className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-red-50 hover:bg-red-100 text-red-700 dark:bg-red-950/40 dark:hover:bg-red-900/50 dark:text-red-300 border border-red-200 dark:border-red-800 flex items-center gap-2 shadow-xs transition-all cursor-pointer"
             >
               <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-              <span>{language === 'bn' ? 'সদস্য মুছুন' : 'Delete Members'}</span>
+              <span>{language === 'bn' ? '' : ''}</span>
             </button>
             <button
               onClick={() => setShowAddModal(true)}

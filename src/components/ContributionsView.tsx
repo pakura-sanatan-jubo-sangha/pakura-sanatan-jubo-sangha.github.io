@@ -419,36 +419,12 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             {language === 'bn'
-              ? 'সদস্যদের নিয়মিত মাসিক সঞ্চয় আদায় ও হিসাব (ধার্যকৃত হার: ৳১০০, ১০ তারিখের পর বিলম্ব ফি: ৳১০)'
-              : 'Monthly savings collection & records (Flat rate: ৳100, late fee after 10th: ৳10)'}
+              ? 'সদস্যদের নিয়মিত মাসিক সঞ্চয় আদায় ও হিসাব'
+              : 'Monthly savings collection & records'}
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {onNavigateTab && (
-            <>
-              <button
-                type="button"
-                onClick={() => onNavigateTab('income')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/40 text-xs font-semibold shadow-2xs cursor-pointer transition-all"
-                title={language === 'bn' ? 'সমিতির নিজস্ব মূলধন বা অনুদান তহবিল জমা করুন' : 'Add Association Fund or Donation'}
-              >
-                <PlusCircle className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                <span>{language === 'bn' ? '+ তহবিল / অনুদান' : '+ Add Fund'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onNavigateTab('expenses')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-xs font-semibold shadow-2xs cursor-pointer transition-all"
-                title={language === 'bn' ? 'গ্যাস বিল, ইউটিলিটি বা সমিতির খরচ পরিশোধ করুন' : 'Record Gas Bill or Utility Expense'}
-              >
-                <PlusCircle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-                <span>{language === 'bn' ? '+ গ্যাস / খরচ বিল' : '+ Gas / Bill'}</span>
-              </button>
-            </>
-          )}
-
           {/* History Icon Button to view all past and current month payment records */}
           <button
             type="button"

@@ -569,7 +569,8 @@ export class StorageService {
           rcptMap.set(r.receiptId, r);
         });
       }
-      localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(Array.from(rcptMap.values())));
+      const sortedReceipts = this.sortReceiptsSequentially(Array.from(rcptMap.values()));
+      localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(sortedReceipts));
 
       // 9. Rules: Union merge
       if (cloudData.rules !== undefined && cloudData.rules.length > 0) {
@@ -3534,10 +3535,37 @@ export class StorageService {
   }
 
   // --- Receipts ---
+  static extractReceiptSequenceNumber(receiptId?: string): number {
+    if (!receiptId) return Number.MAX_SAFE_INTEGER;
+    const match = receiptId.match(/(\d+)(?!.*\d)/);
+    if (!match) return Number.MAX_SAFE_INTEGER;
+    const num = parseInt(match[1], 10);
+    return Number.isFinite(num) ? num : Number.MAX_SAFE_INTEGER;
+  }
+
+  static sortReceiptsSequentially(receipts: Receipt[]): Receipt[] {
+    return [...receipts].sort((a, b) => {
+      const numA = this.extractReceiptSequenceNumber(a?.receiptId);
+      const numB = this.extractReceiptSequenceNumber(b?.receiptId);
+      if (numA !== numB) return numA - numB;
+      const idA = a?.receiptId || '';
+      const idB = b?.receiptId || '';
+      if (idA !== idB) return idA.localeCompare(idB);
+      return (a?.createdAt || '').localeCompare(b?.createdAt || '');
+    });
+  }
+
   static generateReceiptId(): string {
     const receipts = this.getReceipts();
     const existing = new Set(receipts.map((r) => r.receiptId));
-    let count = receipts.length + 1;
+    let maxNum = 0;
+    for (const r of receipts) {
+      const seq = this.extractReceiptSequenceNumber(r.receiptId);
+      if (seq < Number.MAX_SAFE_INTEGER && seq > maxNum) {
+        maxNum = seq;
+      }
+    }
+    let count = Math.max(maxNum, receipts.length) + 1;
     let candidate = `RCT-${String(count).padStart(6, '0')}`;
     while (existing.has(candidate)) {
       count++;
@@ -3751,17 +3779,19 @@ export class StorageService {
       } catch {}
     }
 
+    const sortedList = this.sortReceiptsSequentially(list);
     if (hasChanges || !raw) {
-      localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(list));
+      localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(sortedList));
     }
 
-    return list;
+    return sortedList;
   }
 
   static saveReceipts(receipts: Receipt[]) {
-    localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(receipts));
+    const sorted = this.sortReceiptsSequentially(receipts);
+    localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(sorted));
     try {
-      for (const r of receipts) {
+      for (const r of sorted) {
         FirebaseSyncService.syncReceipt(r).catch(() => {});
       }
     } catch {}
@@ -3785,7 +3815,7 @@ export class StorageService {
       this.saveReceipts(receipts);
       return receipts[existingIndex];
     } else {
-      receipts.unshift(newReceipt);
+      receipts.push(newReceipt);
       this.saveReceipts(receipts);
       return newReceipt;
     }
@@ -5406,8 +5436,7 @@ export class StorageService {
 
     // Generate Official Society Withdrawal Voucher Receipt
     const receipts = this.getReceipts();
-    const nextRcptNum = receipts.length + 1;
-    const receiptId = `RCT-WTH-${String(nextRcptNum).padStart(6, '0')}`;
+    const receiptId = this.generateReceiptId();
     const today = new Date().toISOString().split('T')[0];
 
     const purposeTitle = source === 'profit'
@@ -5437,7 +5466,7 @@ export class StorageService {
     const nextTrxNum = transactions.length + 1;
     const transactionId = `TXN-${String(nextTrxNum).padStart(6, '0')}`;
     newReceipt.transactionId = transactionId;
-    receipts.unshift(newReceipt);
+    receipts.push(newReceipt);
     this.saveReceipts(receipts);
 
     const balanceAfter = availableLiquid - amount;
@@ -5716,8 +5745,7 @@ export class StorageService {
 
     // Generate Official Society Withdrawal Voucher Receipt
     const receipts = this.getReceipts();
-    const nextRcptNum = receipts.length + 1;
-    const receiptId = `RCT-WTH-${String(nextRcptNum).padStart(6, '0')}`;
+    const receiptId = this.generateReceiptId();
     const today = new Date().toISOString().split('T')[0];
 
     const purposeTitle = source === 'profit'
@@ -5747,7 +5775,7 @@ export class StorageService {
     const nextTrxNum = transactions.length + 1;
     const transactionId = `TXN-${String(nextTrxNum).padStart(6, '0')}`;
     newReceipt.transactionId = transactionId;
-    receipts.unshift(newReceipt);
+    receipts.push(newReceipt);
     this.saveReceipts(receipts);
 
     const balanceAfter = previousLiquid - amount;

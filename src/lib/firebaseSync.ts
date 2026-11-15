@@ -3195,31 +3195,6 @@ export class FirebaseSyncService {
   }
 
   /**
-   * Check connection status to Firestore
-   */
-  static async checkConnection(): Promise<{ connected: boolean; message: string }> {
-    try {
-      const pingDoc = doc(db, '_connection_test', 'ping');
-      await getDoc(pingDoc);
-      return {
-        connected: true,
-        message: 'Firebase Firestore connected successfully',
-      };
-    } catch (error: any) {
-      if (error?.code === 'permission-denied') {
-        return {
-          connected: true,
-          message: 'Firebase Firestore reachable (security rules active)',
-        };
-      }
-      return {
-        connected: false,
-        message: error?.message || 'Connection test failed',
-      };
-    }
-  }
-
-  /**
    * Fetch all app records from Firestore
    */
   static async loadAllFromFirestore(): Promise<Partial<FullAppData>> {
@@ -3404,6 +3379,12 @@ export class FirebaseSyncService {
           if (r?.receiptId) {
             receipts.push(r as Receipt);
           }
+        });
+        receipts.sort((a, b) => {
+          const numA = parseInt((a.receiptId || '').match(/(\d+)(?!.*\d)/)?.[1] || String(Number.MAX_SAFE_INTEGER), 10);
+          const numB = parseInt((b.receiptId || '').match(/(\d+)(?!.*\d)/)?.[1] || String(Number.MAX_SAFE_INTEGER), 10);
+          if (numA !== numB) return numA - numB;
+          return (a.receiptId || '').localeCompare(b.receiptId || '');
         });
         result.receipts = receipts;
       }
@@ -3647,6 +3628,12 @@ export class FirebaseSyncService {
               type: r?.type || 'contribution',
               memberSystemId: r?.memberSystemId || '',
             } as Receipt;
+          });
+          receipts.sort((a, b) => {
+            const numA = parseInt((a.receiptId || '').match(/(\d+)(?!.*\d)/)?.[1] || String(Number.MAX_SAFE_INTEGER), 10);
+            const numB = parseInt((b.receiptId || '').match(/(\d+)(?!.*\d)/)?.[1] || String(Number.MAX_SAFE_INTEGER), 10);
+            if (numA !== numB) return numA - numB;
+            return (a.receiptId || '').localeCompare(b.receiptId || '');
           });
           onUpdate({ receipts });
         },

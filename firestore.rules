@@ -118,13 +118,7 @@ service cloud.firestore {
       allow create, update, delete: if true;
     }
 
-    // 5. Connection Test Ping
-    match /_connection_test/{testId} {
-      allow get, list: if true;
-      allow create, update, delete: if true;
-    }
-
-    // 3. Members Registry: Association members
+    // 5. Members Registry: Association members
     match /members/{memberId} {
       allow get, list: if true;
       allow create, update, delete: if true;
