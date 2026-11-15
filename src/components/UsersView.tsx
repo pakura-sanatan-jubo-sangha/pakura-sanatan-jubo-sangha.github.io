@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { UserAccount, UserRole, Language } from '../types';
-import { getTranslation } from '../lib/translations';
+import { getTranslation, formatMemberPhone } from '../lib/translations';
 import { isStrictMainAdmin, MAIN_ADMIN_EMAIL } from '../lib/storage';
+import { canonicalizeAndDeduplicateUsers } from '../lib/firebaseSync';
 import {
   ShieldAlert,
   UserPlus,
@@ -89,8 +90,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
     );
   };
 
-  // Only display sub-accounts / assigned admins & members created by the Main Admin
-  const managedUsers = users.filter((u) => !isTargetMainAdmin(u));
+  // Only display admins and registered users (first account per phone, USR-M-SYS-XXXXXX format)
+  const managedUsers = canonicalizeAndDeduplicateUsers(users).filter((u) => !isTargetMainAdmin(u));
 
   const getRoleBadge = (role: UserRole, isMain?: boolean) => {
     if (isMain) {
@@ -187,8 +188,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 bg-slate-50/50 dark:bg-slate-800/30">
-                  <th className="p-3 font-semibold">{language === 'bn' ? 'ব্যবহারকারী' : 'User'}</th>
-                  <th className="p-3 font-semibold">ইমেইল (Email)</th>
+                  <th className="p-3 font-semibold">{language === 'bn' ? 'ব্যবহারকারী ও আইডি' : 'User & ID'}</th>
+                  <th className="p-3 font-semibold">{language === 'bn' ? 'ইমেইল / মোবাইল' : 'Email / Phone'}</th>
                   <th className="p-3 font-semibold">{t.role}</th>
                   <th className="p-3 font-semibold">{t.status}</th>
                   <th className="p-3 font-semibold text-right">{language === 'bn' ? 'অ্যাকশন' : 'Action'}</th>
@@ -197,14 +198,24 @@ export const UsersView: React.FC<UsersViewProps> = ({
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                 {managedUsers.map((u, idx) => {
                   const isTargetAdmin = u.role === 'admin';
+                  const isRegisteredMember = u.role === 'member';
+                  const contactDisplay =
+                    u.email ||
+                    (u.phone ? formatMemberPhone(u.phone, language) : u.username) ||
+                    '-';
                   return (
                     <tr key={`${u.userId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                       <td className="p-3">
-                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                           <span>{u.name || u.displayName}</span>
                           {isTargetAdmin && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 font-semibold">
                               {language === 'bn' ? 'সহকারী অ্যাডমিন' : 'Admin'}
+                            </span>
+                          )}
+                          {isRegisteredMember && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold">
+                              {language === 'bn' ? 'নিবন্ধিত সদস্য' : 'Registered Member'}
                             </span>
                           )}
                           {u.userId === currentUser.userId && (
@@ -213,8 +224,11 @@ export const UsersView: React.FC<UsersViewProps> = ({
                             </span>
                           )}
                         </div>
+                        <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                          {u.userId}
+                        </div>
                       </td>
-                      <td className="p-3 text-slate-500 font-mono text-[11px]">{u.email || '-'}</td>
+                      <td className="p-3 text-slate-500 font-mono text-[11px]">{contactDisplay}</td>
                       <td className="p-3">
                         <span className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border ${getRoleBadge(u.role, false)}`}>
                           {u.role.toUpperCase()}
@@ -474,6 +488,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   <option value="president">{t.rolePresident} (President)</option>
                   <option value="treasurer">{t.roleTreasurer} (Treasurer)</option>
                   <option value="secretary">{t.roleSecretary} (Secretary)</option>
+                  <option value="member">{t.roleMember || 'Member'} (সদস্য / Member)</option>
                 </select>
                 {isTargetMainAdmin(editingUser) && (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">

@@ -11,6 +11,7 @@ import {
   RegisteredAdminAccount,
   verifyTypedEmailMatchesAdminGmail,
 } from '../lib/firebaseSync';
+import { evaluatePasswordSecurity } from '../lib/passwordSecurity';
 import {
   LogIn,
   UserPlus,
@@ -192,6 +193,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     );
   }, [registeredAdmins, trimmedId, isAdminEmailSearchQuery]);
 
+  const passwordSecurity = useMemo(
+    () => evaluatePasswordSecurity(regPassword, language),
+    [regPassword, language]
+  );
+
   // Live thorough Firebase history verification as user enters phone number in registration
   useEffect(() => {
     if (!isOpen || activeTab !== 'register') return;
@@ -363,9 +369,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     if (!result.success) {
       // Cross-origin fallback (e.g. GitHub Pages on first load before background cloud sync completes):
-      // Directly check Firestore for this member record
+      // Directly check Firestore for an already-registered member user & matching member profile
       try {
-        const cloudMember = await FirebaseSyncService.fetchMemberDirectly(inputVal);
+        const [cloudUser, cloudMember] = await Promise.all([
+          FirebaseSyncService.fetchRegisteredMemberUserFromFirestore(inputVal),
+          FirebaseSyncService.fetchMemberDirectly(inputVal),
+        ]);
         if (cloudMember) {
           const localMembers = StorageService.getMembers();
           if (!localMembers.some((m) => m.systemId === cloudMember.systemId)) {
@@ -373,6 +382,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             StorageService.saveMembers(localMembers);
           }
           effectiveIdentifier = cloudMember.systemId;
+        }
+        if (cloudUser) {
+          StorageService.mergeCloudData({ users: [cloudUser] });
+          effectiveIdentifier = cloudUser.memberSystemId || cloudUser.userId || effectiveIdentifier;
           result = StorageService.loginWithCredentials(effectiveIdentifier, passVal);
         }
       } catch (fetchErr) {
@@ -413,11 +426,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (regPassword.trim().length < 6) {
+    const securityCheck = evaluatePasswordSecurity(regPassword, language);
+    if (!securityCheck.isValidForRegistration) {
       setErrorMsg(
-        language === 'bn'
-          ? 'নিরাপত্তার জন্য পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।'
-          : 'Password must be at least 6 characters.'
+        securityCheck.rejectionReason ||
+          (language === 'bn'
+            ? 'নিরাপত্তার জন্য কমপক্ষে ৮ অক্ষরের পাসওয়ার্ড দিন এবং দুর্বল পাসওয়ার্ড (যেমন 12345678 বা 112233) পরিহার করুন।'
+            : 'Password must be at least 8 characters and cannot be weak like 12345678 or 112233.')
       );
       return;
     }
@@ -731,8 +746,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onChange={(e) => setLoginIdentifier(e.target.value)}
                     placeholder={
                       language === 'bn'
-                        ? 'মোবাইল নম্বর বা সদস্য আইডি/জিমেইল'
-                        : 'Phone number or Member ID / Gmail'
+                        ? 'মোবাইল নম্বর বা জিমেইল'
+                        : 'Phone number or Gmail'
                     }
                     className="w-full pl-9 pr-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition-all"
                   />
@@ -750,14 +765,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {isEmailInput
-                      ? (language === 'bn' ? 'অ্যাডমিন পাসওয়ার্ড (Admin Password):' : 'Admin Password:')
-                      : (language === 'bn' ? 'পাসওয়ার্ড (ঐচ্ছিক / Optional):' : 'Password (Optional for Member):')}{' '}
+                    {language === 'bn' ? 'পাসওয়ার্ড:' : 'Password:'}{' '}
                     {isEmailInput && <span className="text-red-500">*</span>}
                   </label>
                   {!isEmailInput && (
                     <span className="text-[10px] text-slate-400">
-                      {language === 'bn' ? 'না থাকলে খালি রাখুন' : 'Leave blank if none'}
+                      {language === 'bn' ? '' : ''}
                     </span>
                   )}
                 </div>
@@ -771,8 +784,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       isEmailInput
                         ? '••••••••'
                         : language === 'bn'
-                        ? 'পাসওয়ার্ড থাকলে দিন, অন্যথায় খালি রেখে লগইন করুন'
-                        : 'Enter password if set, or leave empty'
+                        ? 'পাসওয়ার্ড দিন'
+                        : 'Enter password'
                     }
                     className="w-full pl-9 pr-10 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition-all"
                   />
@@ -1004,27 +1017,89 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {language === 'bn' ? 'পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর):' : 'Set Password (min 6 chars):'}{' '}
+                    {language === 'bn' ? 'পাসওয়ার্ড (কমপক্ষে ৮ অক্ষর):' : 'Set Password (min 8 chars):'}{' '}
                     <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <input
                       type={showRegPassword ? 'text' : 'password'}
                       required
-                      minLength={6}
+                      minLength={8}
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="New Password"
-                      className="w-full pl-8 pr-8 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      placeholder={language === 'bn' ? 'Password' : 'Password'}
+                      className={`w-full pl-8 ${
+                        regPassword.length > 0 ? 'pr-24' : 'pr-8'
+                      } py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none transition-all`}
                     />
-                    <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <button
-                      type="button"
-                      onClick={() => setShowRegPassword(!showRegPassword)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    >
-                      {showRegPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
+                    <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                      {regPassword.length > 0 && (
+                        <div
+                          aria-live="polite"
+                          title={passwordSecurity.description}
+                          className="inline-flex items-center gap-1.5 pointer-events-none select-none animate-in fade-in duration-150"
+                        >
+                          <div className="flex items-center gap-0.5">
+                            <span
+                              className={`w-2 h-1.5 rounded-full transition-colors duration-200 ${
+                                passwordSecurity.score >= 1
+                                  ? passwordSecurity.level === 'high'
+                                    ? 'bg-emerald-500'
+                                    : passwordSecurity.level === 'medium'
+                                    ? 'bg-amber-500'
+                                    : 'bg-rose-500'
+                                  : 'bg-slate-300 dark:bg-slate-600'
+                              }`}
+                            />
+                            <span
+                              className={`w-2 h-1.5 rounded-full transition-colors duration-200 ${
+                                passwordSecurity.score >= 2
+                                  ? passwordSecurity.level === 'high'
+                                    ? 'bg-emerald-500'
+                                    : 'bg-amber-500'
+                                  : 'bg-slate-300 dark:bg-slate-600'
+                              }`}
+                            />
+                            <span
+                              className={`w-2 h-1.5 rounded-full transition-colors duration-200 ${
+                                passwordSecurity.score >= 3
+                                  ? 'bg-emerald-500'
+                                  : 'bg-slate-300 dark:bg-slate-600'
+                              }`}
+                            />
+                          </div>
+                          <span
+                            className={`text-[10px] font-bold leading-none ${
+                              passwordSecurity.level === 'high'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : passwordSecurity.level === 'medium'
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {passwordSecurity.level === 'high'
+                              ? language === 'bn'
+                                ? 'উচ্চ'
+                                : 'High'
+                              : passwordSecurity.level === 'medium'
+                              ? language === 'bn'
+                                ? 'মাঝারি'
+                                : 'Med'
+                              : language === 'bn'
+                              ? 'নিম্ন'
+                              : 'Low'}
+                          </span>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowRegPassword(!showRegPassword)}
+                        className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {showRegPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1037,10 +1112,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <input
                       type={showRegConfirm ? 'text' : 'password'}
                       required
-                      minLength={6}
+                      minLength={8}
                       value={regConfirmPassword}
                       onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      placeholder="Confirm Password"
+                      placeholder={language === 'bn' ? 'পুনরায় পাসওয়ার্ড দিন' : 'Confirm Password'}
                       className="w-full pl-8 pr-8 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                     />
                     <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />

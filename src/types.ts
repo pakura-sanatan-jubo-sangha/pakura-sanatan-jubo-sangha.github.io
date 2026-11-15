@@ -94,6 +94,8 @@ export interface UserAccount {
   approvedAt?: string;
   lastLogin?: string;
   createdAt: string;
+  isRegistered?: boolean;
+  registeredAt?: string;
   isMainAdmin?: boolean;
 }
 

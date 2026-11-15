@@ -27,7 +27,13 @@ import {
   calculateAccurateLoanDurationAndProfit,
   LoanCalculationResult,
 } from './loanCalculator';
-import { FirebaseSyncService } from './firebaseSync';
+import {
+  FirebaseSyncService,
+  formatCanonicalMemberUserId,
+  isRegisteredUserAccount,
+  canonicalizeAndDeduplicateUsers,
+} from './firebaseSync';
+import { evaluatePasswordSecurity } from './passwordSecurity';
 
 const STORAGE_KEYS = {
   MEMBERS: 'pakura_members_v1',
@@ -253,14 +259,16 @@ export class StorageService {
         }
       }
 
-      // Remove any stale Gmail-linked regular member accounts from local cache
+      // Remove any stale Gmail-linked regular member accounts or unregistered skeleton placeholders from local cache
       try {
         const rawUsers = localStorage.getItem(STORAGE_KEYS.USERS);
         if (rawUsers) {
           const parsedUsers = JSON.parse(rawUsers);
           if (Array.isArray(parsedUsers)) {
-            const filtered = parsedUsers.filter((u: UserAccount) => !isGmailLinkedMember(u));
-            if (filtered.length !== parsedUsers.length) {
+            const filtered = canonicalizeAndDeduplicateUsers(
+              parsedUsers.filter((u: UserAccount) => !isGmailLinkedMember(u) && isRegisteredUserAccount(u, u?.userId))
+            );
+            if (filtered.length !== parsedUsers.length || JSON.stringify(filtered) !== rawUsers) {
               localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
             }
           }
@@ -418,12 +426,27 @@ export class StorageService {
         localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
       }
 
-      // 2. Users (strictly excluding obsolete Gmail-linked regular member accounts)
-      if (cloudData.users && cloudData.users.length > 0) {
+      // 2. Users (strictly registered users & authorized admins only; never re-upload to Firestore during cloud merge)
+      if ((cloudData as any).hasAuthoritativeUsers) {
+        const authoritative = canonicalizeAndDeduplicateUsers(
+          (cloudData.users || []).filter((u) => {
+            if (u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() && u.role === 'admin') {
+              return false;
+            }
+            if (u.userId === 'USR-MAIN-ADMIN') return false;
+            if (isGmailLinkedMember(u)) return false;
+            if (u.memberSystemId && deletedIds.has(u.memberSystemId)) return false;
+            return isRegisteredUserAccount(u, u.userId);
+          })
+        ).map((u) => ({ ...u, isMainAdmin: false }));
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(authoritative));
+      } else if (cloudData.users && cloudData.users.length > 0) {
         const localUsers = this.getUsers();
         const map = new Map<string, UserAccount>();
         localUsers.forEach((u) => {
-          if (!isGmailLinkedMember(u)) map.set(u.userId, u);
+          if (!isGmailLinkedMember(u) && isRegisteredUserAccount(u, u.userId)) {
+            map.set(u.userId, u);
+          }
         });
         cloudData.users.forEach((u) => {
           if (u.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase() && u.role === 'admin') {
@@ -432,10 +455,14 @@ export class StorageService {
           if (u.userId === 'USR-MAIN-ADMIN') return;
           if (isGmailLinkedMember(u)) return;
           if (u.memberSystemId && deletedIds.has(u.memberSystemId)) return;
+          if (!isRegisteredUserAccount(u, u.userId)) return;
           map.set(u.userId, { ...u, isMainAdmin: false });
         });
-        const merged = Array.from(map.values());
-        this.saveUsers(merged);
+        const merged = canonicalizeAndDeduplicateUsers(Array.from(map.values())).map((u) => ({
+          ...u,
+          isMainAdmin: false,
+        }));
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
       }
 
       // 3. Contributions: Union merge to never lose locally recorded payments
@@ -1048,7 +1075,7 @@ export class StorageService {
     }
     try {
       const parsed: UserAccount[] = JSON.parse(raw);
-      return parsed.filter((u) => {
+      const valid = parsed.filter((u) => {
         const email = (u.email || '').toLowerCase().trim();
         const uname = (u.username || '').toLowerCase().trim();
         return (
@@ -1058,28 +1085,31 @@ export class StorageService {
           uname !== 'member1' &&
           email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
           u.userId !== 'USR-MAIN-ADMIN' &&
-          !isGmailLinkedMember(u)
+          !isGmailLinkedMember(u) &&
+          isRegisteredUserAccount(u, u?.userId)
         );
       });
+      return canonicalizeAndDeduplicateUsers(valid);
     } catch {
       return [];
     }
   }
 
   static saveUsers(users: UserAccount[]) {
-    const cleanUsers = users
-      .filter((u) => {
+    const cleanUsers = canonicalizeAndDeduplicateUsers(
+      users.filter((u) => {
         const email = (u.email || '').toLowerCase().trim();
         return (
           email !== MAIN_ADMIN_EMAIL.toLowerCase() &&
           u.userId !== 'USR-MAIN-ADMIN' &&
-          !isGmailLinkedMember(u)
+          !isGmailLinkedMember(u) &&
+          isRegisteredUserAccount(u, u?.userId)
         );
       })
-      .map((u) => ({
-        ...u,
-        isMainAdmin: false,
-      }));
+    ).map((u) => ({
+      ...u,
+      isMainAdmin: false,
+    }));
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(cleanUsers));
     try {
       for (const u of cleanUsers) {
@@ -1297,10 +1327,13 @@ export class StorageService {
       };
     }
 
-    if (!password || password.trim().length < 6) {
+    const securityCheck = evaluatePasswordSecurity(password, 'bn');
+    if (!securityCheck.isValidForRegistration) {
       return {
         success: false,
-        message: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।',
+        message:
+          securityCheck.rejectionReason ||
+          'পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে এবং দুর্বল পাসওয়ার্ড (যেমন 12345678 বা 112233) ব্যবহার করা যাবে না।',
       };
     }
 
@@ -1328,11 +1361,13 @@ export class StorageService {
       const isSkeleton =
         u.userId.startsWith('USR-M-SYS-') &&
         (!u.password || u.password.trim() === '') &&
+        !u.isRegistered &&
         u.memberSystemId === member.systemId;
       return !isSkeleton;
     });
+    const nowIso = new Date().toISOString();
     const newUser: UserAccount = {
-      userId: `USR-M-${member.systemId.replace(/\D/g, '') || Date.now()}`,
+      userId: formatCanonicalMemberUserId(member.systemId),
       username: cleanPhone,
       phone: cleanPhone,
       name: member.name,
@@ -1341,7 +1376,9 @@ export class StorageService {
       memberSystemId: member.systemId,
       password: password.trim(),
       status: 'active',
-      createdAt: new Date().toISOString().split('T')[0],
+      isRegistered: true,
+      registeredAt: nowIso,
+      createdAt: nowIso.split('T')[0],
     };
 
     users.push(newUser);
@@ -1395,9 +1432,11 @@ export class StorageService {
   ): { success: boolean; message: string; user?: UserAccount } {
     const cleanPhone = normalizePhoneNumber(phone);
     const users = this.getUsers();
+    const nowIso = new Date().toISOString();
+    const canonicalUserId = formatCanonicalMemberUserId(member.systemId, firebaseUid || `USR-M-${cleanPhone}`);
     const newUser: UserAccount = {
-      userId: firebaseUid || `USR-M-${cleanPhone}`,
-      firebaseUid,
+      userId: canonicalUserId,
+      firebaseUid: firebaseUid || canonicalUserId,
       username: cleanPhone,
       phone: cleanPhone,
       name: member.name,
@@ -1406,7 +1445,9 @@ export class StorageService {
       memberSystemId: member.systemId,
       password: password || '',
       status: 'active',
-      createdAt: new Date().toISOString().split('T')[0],
+      isRegistered: true,
+      registeredAt: nowIso,
+      createdAt: nowIso.split('T')[0],
     };
 
     const filteredUsers = users.filter((u) => normalizePhoneNumber(u.username || u.phone || '') !== cleanPhone);
@@ -1637,25 +1678,13 @@ export class StorageService {
       );
     });
 
-    if (!matchedUser && matchedMember) {
-      // Auto-provision user account for this member
-      matchedUser = {
-        userId: `USR-M-${matchedMember.systemId}`,
-        username: matchedMember.phone || matchedMember.systemId,
-        phone: matchedMember.phone,
-        name: matchedMember.name,
-        displayName: `${matchedMember.name} (সদস্য)`,
-        role: 'member',
-        memberSystemId: matchedMember.systemId,
-        password: cleanPass || 'temp1234',
-        status: 'active',
-        createdAt: new Date().toISOString().split('T')[0],
-      };
-      users.push(matchedUser);
-      this.saveUsers(users);
-    }
-
     if (!matchedUser) {
+      if (matchedMember) {
+        return {
+          success: false,
+          message: `সদস্য "${matchedMember.name}" (${matchedMember.systemId}) এর নামে এখনো কোনো নিবন্ধিত অ্যাকাউন্ট তৈরি করা হয়নি। অনুগ্রহ করে "রেজিস্ট্রেশন" ট্যাব থেকে প্রথমে আপনার মোবাইল নম্বর দিয়ে অ্যাকাউন্ট তৈরি করুন।`,
+        };
+      }
       if (cleanPhone.length >= 8) {
         return {
           success: false,
@@ -1774,19 +1803,10 @@ export class StorageService {
     );
 
     if (!matchedUser) {
-      matchedUser = {
-        userId: `USR-M-${matchedMember.systemId}`,
-        username: matchedMember.phone || matchedMember.systemId,
-        phone: matchedMember.phone,
-        name: matchedMember.name,
-        displayName: `${matchedMember.name} (সদস্য)`,
-        role: 'member',
-        memberSystemId: matchedMember.systemId,
-        status: 'active',
-        createdAt: new Date().toISOString().split('T')[0],
+      return {
+        success: false,
+        message: `সদস্য "${matchedMember.name}" (${matchedMember.systemId}) এর নামে এখনো কোনো নিবন্ধিত অ্যাকাউন্ট তৈরি করা হয়নি। অনুগ্রহ করে প্রথমে রেজিস্ট্রেশন সম্পন্ন করুন।`,
       };
-      users.push(matchedUser);
-      this.saveUsers(users);
     }
 
     this.setCurrentUser(matchedUser);

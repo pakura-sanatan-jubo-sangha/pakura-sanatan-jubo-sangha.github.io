@@ -11,7 +11,7 @@ import {
 } from '../types';
 import { getTranslation, formatMemberPhone } from '../lib/translations';
 import { isStrictMainAdmin, MAIN_ADMIN_EMAIL, StorageService } from '../lib/storage';
-import { FirebaseSyncService } from '../lib/firebaseSync';
+import { FirebaseSyncService, canonicalizeAndDeduplicateUsers } from '../lib/firebaseSync';
 import {
   ShieldAlert,
   UserPlus,
@@ -171,8 +171,8 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
     );
   };
 
-  // Only display sub-accounts / assigned admins created by the Main Admin
-  const managedUsers = users.filter((u) => !isTargetMainAdmin(u));
+  // Only display admins and registered users (first account per phone, USR-M-SYS-XXXXXX format)
+  const managedUsers = canonicalizeAndDeduplicateUsers(users).filter((u) => !isTargetMainAdmin(u));
 
   // Handle Add User Submit (Strictly Main Admin Only)
   const handleAddUserSubmit = async (e: React.FormEvent) => {
@@ -841,8 +841,8 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 bg-slate-50/50 dark:bg-slate-800/30">
-                      <th className="p-3 font-semibold">{language === 'bn' ? 'ব্যবহারকারী' : 'User'}</th>
-                      <th className="p-3 font-semibold">ইমেইল (Email)</th>
+                      <th className="p-3 font-semibold">{language === 'bn' ? 'ব্যবহারকারী ও আইডি' : 'User & ID'}</th>
+                      <th className="p-3 font-semibold">{language === 'bn' ? 'ইমেইল / মোবাইল' : 'Email / Phone'}</th>
                       <th className="p-3 font-semibold">{t.role}</th>
                       <th className="p-3 font-semibold">{t.status}</th>
                       <th className="p-3 font-semibold text-right">{language === 'bn' ? 'অ্যাকশন' : 'Action'}</th>
@@ -851,14 +851,24 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {managedUsers.map((u, idx) => {
                       const isTargetAdmin = u.role === 'admin';
+                      const isRegisteredMember = u.role === 'member';
+                      const contactDisplay =
+                        u.email ||
+                        (u.phone ? formatMemberPhone(u.phone, language) : u.username) ||
+                        '-';
                       return (
                         <tr key={`${u.userId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                           <td className="p-3">
-                            <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                               <span>{u.name || u.displayName}</span>
                               {isTargetAdmin && (
                                 <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 font-semibold">
                                   {language === 'bn' ? 'সহকারী অ্যাডমিন' : 'Admin'}
+                                </span>
+                              )}
+                              {isRegisteredMember && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold">
+                                  {language === 'bn' ? 'নিবন্ধিত সদস্য' : 'Registered Member'}
                                 </span>
                               )}
                               {u.userId === currentUser.userId && (
@@ -867,8 +877,11 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                                 </span>
                               )}
                             </div>
+                            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                              {u.userId}
+                            </div>
                           </td>
-                          <td className="p-3 text-slate-500 font-mono text-[11px]">{u.email || '-'}</td>
+                          <td className="p-3 text-slate-500 font-mono text-[11px]">{contactDisplay}</td>
                           <td className="p-3">
                             <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700">
                               {u.role.toUpperCase()}
@@ -1425,13 +1438,15 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl">
             <h3 className="font-bold text-base text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
-              {language === 'bn' ? 'সহকারী অ্যাডমিনের রোল সম্পাদনা' : 'Edit Admin Role'}
+              {language === 'bn' ? 'ব্যবহারকারীর রোল ও স্ট্যাটাস সম্পাদনা' : 'Edit User Role & Status'}
             </h3>
 
             <form onSubmit={handleEditUserSubmit} className="mt-4 space-y-3.5">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
                 <div className="font-bold text-slate-900 dark:text-white">{editingUser.name || editingUser.displayName}</div>
-                <div className="text-slate-500 font-mono mt-0.5">{editingUser.email || editingUser.username}</div>
+                <div className="text-slate-500 font-mono mt-0.5">
+                  {editingUser.userId} • {editingUser.email || (editingUser.phone ? formatMemberPhone(editingUser.phone, language) : editingUser.username)}
+                </div>
               </div>
 
               <div>
@@ -2020,7 +2035,9 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-base text-slate-900 dark:text-white">
-                  {language === 'bn' ? 'অ্যাডমিন অপসারণ নিশ্চিতকরণ' : 'Confirm Admin Deletion'}
+                  {userToDelete.role === 'member'
+                    ? (language === 'bn' ? 'নিবন্ধিত সদস্য অপসারণ নিশ্চিতকরণ' : 'Confirm Member Account Deletion')
+                    : (language === 'bn' ? 'অ্যাডমিন অপসারণ নিশ্চিতকরণ' : 'Confirm Admin Deletion')}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {language === 'bn' ? 'প্রধান অ্যাডমিনের একক কর্তৃত্ব' : 'Main Admin Authority'}
@@ -2030,19 +2047,29 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
 
             <div className="mt-4 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1.5">
               <div className="flex justify-between">
+                <span className="text-slate-500">{language === 'bn' ? 'আইডি:' : 'User ID:'}</span>
+                <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">{userToDelete.userId}</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-slate-500">{language === 'bn' ? 'নাম:' : 'Name:'}</span>
                 <span className="font-bold text-slate-900 dark:text-white">{userToDelete.name || userToDelete.displayName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">{language === 'bn' ? 'ইমেইল:' : 'Email:'}</span>
-                <span className="font-mono text-slate-700 dark:text-slate-300">{userToDelete.email || userToDelete.username}</span>
+                <span className="text-slate-500">{userToDelete.email ? (language === 'bn' ? 'ইমেইল:' : 'Email:') : (language === 'bn' ? 'মোবাইল:' : 'Phone:')}</span>
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {userToDelete.email || (userToDelete.phone ? formatMemberPhone(userToDelete.phone, language) : userToDelete.username)}
+                </span>
               </div>
             </div>
 
             <p className="mt-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              {language === 'bn'
-                ? 'আপনি কি নিশ্চিত যে এই সহকারী অ্যাডমিনকে স্থায়ীভাবে মুছে ফেলতে চান? প্রধান অ্যাডমিন হিসেবে আপনার এই কর্তৃত্ব রয়েছে।'
-                : 'Are you sure you want to permanently delete this administrator?'}
+              {userToDelete.role === 'member'
+                ? (language === 'bn'
+                    ? 'আপনি কি নিশ্চিত যে এই নিবন্ধিত সদস্যের অ্যাকাউন্টটি স্থায়ীভাবে মুছে ফেলতে চান? প্রধান অ্যাডমিন হিসেবে আপনার এই কর্তৃত্ব রয়েছে।'
+                    : 'Are you sure you want to permanently delete this registered member account?')
+                : (language === 'bn'
+                    ? 'আপনি কি নিশ্চিত যে এই সহকারী অ্যাডমিনকে স্থায়ীভাবে মুছে ফেলতে চান? প্রধান অ্যাডমিন হিসেবে আপনার এই কর্তৃত্ব রয়েছে।'
+                    : 'Are you sure you want to permanently delete this administrator?')}
             </p>
 
             <div className="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-slate-100 dark:border-slate-800">
