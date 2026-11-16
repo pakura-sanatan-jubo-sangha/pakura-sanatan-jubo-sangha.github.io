@@ -35,6 +35,7 @@ import {
   LogIn,
   Globe,
 } from 'lucide-react';
+import { OwnerProfileHover } from './OwnerProfileHover';
 
 interface HeaderProps {
   currentUser: UserAccount;
@@ -483,16 +484,20 @@ export const Header: React.FC<HeaderProps> = ({
                     className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
                     title={language === 'bn' ? 'ব্যবহারকারী একাউন্ট মেনু' : 'User Account Menu'}
                   >
-                    <UserCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                    <span className="truncate max-w-[150px]">{currentUser.name || currentUser.displayName}</span>
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <OwnerProfileHover name={currentUser.name || currentUser.displayName} language={language} align="right">
+                      <span className="truncate max-w-[150px] inline-block align-bottom">
+                        {currentUser.name || currentUser.displayName}
+                      </span>
+                    </OwnerProfileHover>
                   </button>
 
                   {/* User Profile Popover */}
                   {showUserMenu && (
                     <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2 animate-in fade-in zoom-in-95 duration-150">
                       <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1">
-                        <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {currentUser.name || currentUser.displayName}
+                        <div className="text-xs font-bold text-slate-900 dark:text-white">
+                          <OwnerProfileHover name={currentUser.name || currentUser.displayName} language={language} align="right" />
                         </div>
                         <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
                           {currentUser.role === 'admin'

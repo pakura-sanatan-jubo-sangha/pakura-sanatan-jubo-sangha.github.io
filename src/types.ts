@@ -375,6 +375,29 @@ export interface ServerApiResponse<T = any> {
   timestamp: string;
 }
 
+export type SocialPlatformKey =
+  | 'website'
+  | 'linkedin'
+  | 'twitter'
+  | 'github'
+  | 'facebook'
+  | 'instagram'
+  | 'tiktok'
+  | 'telegram';
+
+export interface OwnerSocialLinks {
+  website?: string;
+  linkedin?: string;
+  twitter?: string;
+  github?: string;
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+  telegram?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface FullAppData {
   settings: AppSettings;
   users: UserAccount[];
@@ -395,4 +418,5 @@ export interface FullAppData {
   profitDistributions?: ProfitDistribution[];
   memberWithdrawals?: MemberWithdrawal[];
   backupSnapshots?: BackupSnapshot[];
+  socialLinks?: OwnerSocialLinks;
 }

@@ -303,6 +303,23 @@
         "generalMeetingTime": { "type": "string", "description": "Scheduled monthly General Meeting time (e.g. '8:30 PM' or '20:30')" },
         "meetingTimeUpdatedAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "OwnerSocialLinks": {
+      "title": "OwnerSocialLinks",
+      "description": "Online profile and social media links for the owner/Main Admin displayed on name hover",
+      "type": "object",
+      "properties": {
+        "website": { "type": "string", "maxLength": 500, "description": "Personal website URL" },
+        "linkedin": { "type": "string", "maxLength": 500, "description": "LinkedIn profile URL" },
+        "twitter": { "type": "string", "maxLength": 500, "description": "Twitter/X profile URL" },
+        "github": { "type": "string", "maxLength": 500, "description": "GitHub profile URL" },
+        "facebook": { "type": "string", "maxLength": 500, "description": "Facebook profile URL" },
+        "instagram": { "type": "string", "maxLength": 500, "description": "Instagram profile URL" },
+        "tiktok": { "type": "string", "maxLength": 500, "description": "TikTok profile URL" },
+        "telegram": { "type": "string", "maxLength": 500, "description": "Telegram profile URL" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 150 }
+      }
     }
   },
   "firestore": {
@@ -317,6 +334,10 @@
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/Settings" },
       "description": "Global application configuration and admin security settings"
+    },
+    "/social_links/{profileId}": {
+      "schema": { "$ref": "#/entities/OwnerSocialLinks" },
+      "description": "Publicly readable online profile links (website, LinkedIn, Twitter, GitHub, Facebook, Instagram, TikTok) editable in Firebase"
     },
     "/members/{memberId}": {
       "schema": { "$ref": "#/entities/Member" },

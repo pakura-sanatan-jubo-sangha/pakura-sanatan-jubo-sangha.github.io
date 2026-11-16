@@ -45,7 +45,9 @@ import {
   EyeOff,
   Key,
   RefreshCw,
+  Globe,
 } from 'lucide-react';
+import { OwnerProfileHover, OwnerSocialLinksModal } from './OwnerProfileHover';
 
 interface AdminAndRulesViewProps {
   users: UserAccount[];
@@ -144,6 +146,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
   const [passChangeError, setPassChangeError] = useState<string | null>(null);
   const [passChangeSuccess, setPassChangeSuccess] = useState<string | null>(null);
   const [isUpdatingPass, setIsUpdatingPass] = useState(false);
+  const [showSocialLinksModal, setShowSocialLinksModal] = useState(false);
 
   // Society Rules states
   const [showAddRuleModal, setShowAddRuleModal] = useState(false);
@@ -745,7 +748,9 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-slate-900 dark:text-white text-sm">
-                    কাজল চন্দ্র দাস (Kajol Chandra Das)
+                    <OwnerProfileHover name="Kajol Chandra Das" language={language}>
+                      কাজল চন্দ্র দাস (Kajol Chandra Das)
+                    </OwnerProfileHover>
                   </span>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white">
                     MAIN ADMIN
@@ -785,17 +790,28 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
               </button>
 
               {isMainAdmin && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isMainAdmin) return;
-                    setShowAddUserModal(true);
-                  }}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  <span>{language === 'bn' ? 'সহকারী অ্যাডমিন যোগ করুন' : 'Add Admin'}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowSocialLinksModal(true)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                  >
+                    <Globe className="w-4 h-4 text-emerald-600" />
+                    <span>{language === 'bn' ? 'অনলাইন প্রোফাইল' : 'Online Profiles'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isMainAdmin) return;
+                      setShowAddUserModal(true);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>{language === 'bn' ? 'সহকারী অ্যাডমিন যোগ করুন' : 'Add Admin'}</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -860,7 +876,9 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                         <tr key={`${u.userId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                           <td className="p-3">
                             <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
-                              <span>{u.name || u.displayName}</span>
+                              <span>
+                                <OwnerProfileHover name={u.name || u.displayName} language={language} />
+                              </span>
                               {isTargetAdmin && (
                                 <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 font-semibold">
                                   {language === 'bn' ? 'সহকারী অ্যাডমিন' : 'Admin'}
@@ -2228,6 +2246,14 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {isMainAdmin && (
+        <OwnerSocialLinksModal
+          isOpen={showSocialLinksModal}
+          onClose={() => setShowSocialLinksModal(false)}
+          language={language}
+        />
       )}
     </div>
   );

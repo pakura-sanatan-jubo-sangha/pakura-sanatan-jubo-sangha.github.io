@@ -18,6 +18,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
+import { OwnerProfileHover } from './OwnerProfileHover';
 
 interface TransactionsViewProps {
   transactions: Transaction[];
@@ -388,7 +389,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     <td className="p-3 text-slate-500 whitespace-nowrap">{trx.date}</td>
                     <td className="p-3 text-slate-400 font-mono text-[11px]">#{trx.transactionId}</td>
                     <td className="p-3 font-semibold text-slate-800 dark:text-slate-200 max-w-[180px]">
-                      {trx.partyName || (trx as any).partname || '—'}
+                      <OwnerProfileHover name={trx.partyName || (trx as any).partname || '—'} language={language} />
                     </td>
                     <td className="p-3 font-semibold text-slate-900 dark:text-white max-w-sm">
                       {trx.description}

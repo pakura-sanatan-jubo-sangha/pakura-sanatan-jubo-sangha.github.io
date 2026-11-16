@@ -21,6 +21,7 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
+import { OwnerProfileHover } from './OwnerProfileHover';
 
 interface ContributionsViewProps {
   members: Member[];
@@ -738,7 +739,7 @@ export const ContributionsView: React.FC<ContributionsViewProps> = ({
 
                         <div>
                           <div className="text-xs font-bold text-slate-900 dark:text-white">
-                            {member.name}
+                            <OwnerProfileHover name={member.name} language={language} />
                           </div>
                           <div className="text-[11px] text-slate-500 dark:text-slate-400">
                             <span className="font-mono">{formatMemberPhone(member.phone, canManage)}</span> • {language === 'bn' ? 'মোট সঞ্চয়:' : 'Total Savings:'} ৳{(member.currentBalance || 0).toLocaleString()}

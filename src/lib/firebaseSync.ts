@@ -57,7 +57,12 @@ import {
   ExpenseRecord,
   ProfitDistribution,
   Transaction,
+  OwnerSocialLinks,
 } from '../types';
+import {
+  sanitizeOwnerSocialLinks,
+  cacheOwnerSocialLinks,
+} from './socialLinks';
 
 export interface RegisteredAdminAccount {
   userId: string;
@@ -3785,5 +3790,126 @@ export class FirebaseSyncService {
         } catch {}
       });
     };
+  }
+
+  /**
+   * Ensures `social_links/owner` exists in Firestore so all 7 profile link keys
+   * are immediately visible and editable directly from Firebase Console.
+   */
+  static async ensureOwnerSocialLinksSeeded(): Promise<OwnerSocialLinks> {
+    const path = 'social_links/owner';
+    const docRef = doc(db, 'social_links', 'owner');
+    try {
+      const snap = await getDocFromServer(docRef);
+      if (snap.exists()) {
+        const sanitized = sanitizeOwnerSocialLinks(snap.data() as Record<string, unknown>);
+        cacheOwnerSocialLinks(sanitized);
+        return sanitized;
+      }
+      const initialDoc: OwnerSocialLinks = {
+        website: '',
+        linkedin: '',
+        twitter: '',
+        github: '',
+        facebook: '',
+        instagram: '',
+        tiktok: '',
+        telegram: '',
+        updatedAt: new Date().toISOString(),
+        updatedBy: MAIN_ADMIN_EMAIL_CONST,
+      };
+      await setDoc(docRef, initialDoc);
+      cacheOwnerSocialLinks(initialDoc);
+      return initialDoc;
+    } catch (err) {
+      // Fallback to cache-tolerant getDoc if offline, otherwise report permission errors properly
+      try {
+        const fallbackSnap = await getDoc(docRef);
+        if (fallbackSnap.exists()) {
+          const sanitized = sanitizeOwnerSocialLinks(fallbackSnap.data() as Record<string, unknown>);
+          cacheOwnerSocialLinks(sanitized);
+          return sanitized;
+        }
+      } catch {}
+      if (err instanceof Error && err.message.toLowerCase().includes('permission')) {
+        handleFirestoreError(err, OperationType.GET, path);
+      }
+      return {};
+    }
+  }
+
+  /**
+   * Fetches the owner's online profile links directly from Firestore `social_links/owner`.
+   */
+  static async fetchOwnerSocialLinks(): Promise<OwnerSocialLinks> {
+    const path = 'social_links/owner';
+    try {
+      const snap = await getDoc(doc(db, 'social_links', 'owner'));
+      if (!snap.exists()) return {};
+      const sanitized = sanitizeOwnerSocialLinks(snap.data() as Record<string, unknown>);
+      cacheOwnerSocialLinks(sanitized);
+      return sanitized;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, path);
+      return {};
+    }
+  }
+
+  /**
+   * Saves updated online profile links to Firestore `social_links/owner`.
+   * Platforms left blank are stored as empty strings so they never render on the UI.
+   */
+  static async saveOwnerSocialLinks(
+    links: OwnerSocialLinks,
+    updatedBy?: string
+  ): Promise<OwnerSocialLinks> {
+    const path = 'social_links/owner';
+    const sanitized = sanitizeOwnerSocialLinks(links as Record<string, unknown>);
+    const payload: Record<string, string> = {
+      website: sanitized.website || '',
+      linkedin: sanitized.linkedin || '',
+      twitter: sanitized.twitter || '',
+      github: sanitized.github || '',
+      facebook: sanitized.facebook || '',
+      instagram: sanitized.instagram || '',
+      tiktok: sanitized.tiktok || '',
+      telegram: sanitized.telegram || '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: (updatedBy || MAIN_ADMIN_EMAIL_CONST).slice(0, 150),
+    };
+    try {
+      await setDoc(doc(db, 'social_links', 'owner'), payload);
+      cacheOwnerSocialLinks(sanitized);
+      return sanitized;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+      return sanitized;
+    }
+  }
+
+  /**
+   * Real-time Firestore listener for `social_links/owner`.
+   * Any update made directly in Firebase Console or in-app reflects immediately.
+   */
+  static subscribeToOwnerSocialLinks(
+    onUpdate: (links: OwnerSocialLinks) => void
+  ): () => void {
+    const path = 'social_links/owner';
+    const docRef = doc(db, 'social_links', 'owner');
+    return onSnapshot(
+      docRef,
+      (snap) => {
+        if (!snap.exists()) {
+          onUpdate({});
+          return;
+        }
+        const sanitized = sanitizeOwnerSocialLinks(snap.data() as Record<string, unknown>);
+        cacheOwnerSocialLinks(sanitized);
+        onUpdate(sanitized);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, path);
+      }
+    );
   }
 }

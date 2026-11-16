@@ -9,11 +9,13 @@ import {
   SocietyRule,
   MeetingAttendee,
   WithdrawalSource,
+  OwnerSocialLinks,
 } from './types';
 import { StorageService, MAIN_ADMIN_EMAIL, isStrictMainAdmin } from './lib/storage';
 import { GoogleSheetsService, syncViaAppsScriptWebhook } from './lib/sheetsService';
 import { getAccessToken, initAuth, firebaseLogout } from './lib/firebase';
 import { FirebaseSyncService } from './lib/firebaseSync';
+import { OwnerSocialLinksContext, getCachedOwnerSocialLinks } from './lib/socialLinks';
 import { getTranslation } from './lib/translations';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -37,6 +39,7 @@ import { WithdrawalsManagementView } from './components/WithdrawalsManagementVie
 import { InteractiveHoverEffects } from './components/InteractiveHoverEffects';
 import { AuthModal, AuthMode } from './components/AuthModal';
 import { NotificationsModal } from './components/NotificationsModal';
+import { OwnerProfileHover } from './components/OwnerProfileHover';
 import {
   generateUserNotifications,
   markNotificationAsRead,
@@ -115,6 +118,8 @@ export default function App() {
   const [language, setLanguage] = useState<Language>(() => StorageService.getLanguage() || appData.settings.language || 'bn');
   const [theme, setTheme] = useState<Theme>(() => StorageService.getTheme() || appData.settings.theme || 'light');
   const [currentUser, setCurrentUser] = useState<UserAccount>(() => StorageService.getCurrentUser());
+  const [ownerSocialLinks, setOwnerSocialLinks] = useState<OwnerSocialLinks>(() => getCachedOwnerSocialLinks());
+  const [socialLinksLoaded, setSocialLinksLoaded] = useState(false);
 
   const isViewOnly = currentUser.userId === 'USR-VIEW-ONLY';
   const isMember = currentUser.role === 'member' && !isViewOnly;
@@ -365,6 +370,40 @@ export default function App() {
       if (unsubscribeRealtime) unsubscribeRealtime();
     };
   }, []);
+
+  // 4b. Real-time Firestore listener for Owner Online Profile Links (social_links/owner)
+  useEffect(() => {
+    let active = true;
+    FirebaseSyncService.ensureOwnerSocialLinksSeeded()
+      .then((initialLinks) => {
+        if (!active) return;
+        setOwnerSocialLinks(initialLinks);
+        setSocialLinksLoaded(true);
+      })
+      .catch(() => {});
+
+    const unsubSocial = FirebaseSyncService.subscribeToOwnerSocialLinks((links) => {
+      if (!active) return;
+      setOwnerSocialLinks(links);
+      setSocialLinksLoaded(true);
+    });
+
+    return () => {
+      active = false;
+      try {
+        unsubSocial();
+      } catch {}
+    };
+  }, []);
+
+  const handleUpdateOwnerSocialLinks = async (nextLinks: OwnerSocialLinks) => {
+    const saved = await FirebaseSyncService.saveOwnerSocialLinks(
+      nextLinks,
+      currentUser.email || MAIN_ADMIN_EMAIL
+    );
+    setOwnerSocialLinks(saved);
+    setSocialLinksLoaded(true);
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -1226,9 +1265,16 @@ export default function App() {
   }, [currentMemberRecord, linkedMemberRecords, appData.members, currentUser]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 relative">
-      {/* Global Interactive Dynamic Color Shifting & Area Hover Effects */}
-      <InteractiveHoverEffects />
+    <OwnerSocialLinksContext.Provider
+      value={{
+        links: ownerSocialLinks,
+        isLoaded: socialLinksLoaded,
+        onUpdateLinks: handleUpdateOwnerSocialLinks,
+      }}
+    >
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 relative">
+        {/* Global Interactive Dynamic Color Shifting & Area Hover Effects */}
+        <InteractiveHoverEffects />
 
       {/* Toast Alert Notification */}
       {toastMessage && (
@@ -1786,6 +1832,25 @@ export default function App() {
         </main>
       </div>
 
+      {/* Bottom Footer on Every Page */}
+      <footer
+        className={`mt-auto w-full border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs py-3.5 px-4 text-center text-xs text-slate-600 dark:text-slate-400 print:hidden ${
+          !isViewOnly ? 'pb-20 lg:pb-3.5' : ''
+        }`}
+      >
+        <span>Developed by </span>
+        <OwnerProfileHover
+          name="Kajal Chandra Das"
+          language={language}
+          placement="top"
+          align="center"
+          alwaysEnable
+          className="font-semibold text-slate-800 dark:text-slate-200"
+        >
+          Kajal Chandra Das
+        </OwnerProfileHover>
+      </footer>
+
       {/* Mobile Bottom Bar Navigation: Hidden when not logged in; returns when logged in */}
       {!isViewOnly && (
         <MobileNav
@@ -1822,5 +1887,6 @@ export default function App() {
           onNavigateTab={(tab) => setCurrentTab(tab)}
         />
       </div>
-    );
+    </OwnerSocialLinksContext.Provider>
+  );
 }

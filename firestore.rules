@@ -94,6 +94,20 @@ service cloud.firestore {
              (!('partname' in incoming()) || (incoming().partname is string && incoming().partname.size() <= 200));
     }
 
+    function isValidSocialLinks(data) {
+      return data.keys().hasOnly(['website', 'linkedin', 'twitter', 'github', 'facebook', 'instagram', 'tiktok', 'telegram', 'updatedAt', 'updatedBy']) &&
+             (!('website' in data) || (data.website is string && data.website.size() <= 500)) &&
+             (!('linkedin' in data) || (data.linkedin is string && data.linkedin.size() <= 500)) &&
+             (!('twitter' in data) || (data.twitter is string && data.twitter.size() <= 500)) &&
+             (!('github' in data) || (data.github is string && data.github.size() <= 500)) &&
+             (!('facebook' in data) || (data.facebook is string && data.facebook.size() <= 500)) &&
+             (!('instagram' in data) || (data.instagram is string && data.instagram.size() <= 500)) &&
+             (!('tiktok' in data) || (data.tiktok is string && data.tiktok.size() <= 500)) &&
+             (!('telegram' in data) || (data.telegram is string && data.telegram.size() <= 500)) &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 100)) &&
+             (!('updatedBy' in data) || (data.updatedBy is string && data.updatedBy.size() <= 150));
+    }
+
     // 1. Admins Registry
     match /admins/{adminId} {
       allow get, list: if true;
@@ -212,6 +226,13 @@ service cloud.firestore {
     match /registration_history/{historyId} {
       allow get, list: if true;
       allow create, update: if true;
+      allow delete: if false;
+    }
+
+    // 18. Owner / Main Admin Online Profile & Social Links
+    match /social_links/{profileId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(profileId) && isValidSocialLinks(incoming());
       allow delete: if false;
     }
   }
