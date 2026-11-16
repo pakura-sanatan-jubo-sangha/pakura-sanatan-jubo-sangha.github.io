@@ -336,7 +336,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   {incomes.map((inc, idx) => (
                     <tr key={`${inc.incomeId}-${idx}`}>
                       <td className="py-2 text-slate-500">{inc.date}</td>
-                      <td className="py-2 font-medium">{inc.category}</td>
+                      <td className="py-2 font-medium">
+                        {inc.categoryLabel ||
+                          (inc.category === 'loan_profit'
+                            ? language === 'bn'
+                              ? 'পূর্ববর্তী ঋণের মুনাফা'
+                              : 'Previous Loan Profit'
+                            : inc.category)}
+                      </td>
                       <td className="py-2 text-right font-bold text-teal-600">+৳{inc.amount.toLocaleString()}</td>
                     </tr>
                   ))}

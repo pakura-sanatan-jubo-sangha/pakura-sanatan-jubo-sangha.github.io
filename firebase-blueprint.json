@@ -199,15 +199,22 @@
     },
     "Income": {
       "title": "Income",
-      "description": "Association income record",
+      "description": "Association income record including previous loan profit entries",
       "type": "object",
       "properties": {
         "incomeId": { "type": "string", "maxLength": 64 },
         "date": { "type": "string", "maxLength": 20 },
         "category": { "type": "string", "maxLength": 50 },
+        "categoryLabel": { "type": "string", "maxLength": 120 },
         "amount": { "type": "number" },
         "description": { "type": "string", "maxLength": 255 },
-        "paymentMethod": { "type": "string", "enum": ["cash", "bank"] }
+        "paymentMethod": { "type": "string", "enum": ["cash", "bank"] },
+        "reference": { "type": "string", "maxLength": 120 },
+        "receiptId": { "type": "string", "maxLength": 64 },
+        "createdBy": { "type": "string", "maxLength": 100 },
+        "person": { "type": "string", "maxLength": 100 },
+        "note": { "type": "string", "maxLength": 255 },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["incomeId", "date", "category", "amount"]
     },

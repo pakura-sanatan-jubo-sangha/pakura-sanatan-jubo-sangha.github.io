@@ -169,7 +169,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                     {language === 'bn' ? 'ঋণ থেকে অর্জিত রিটার্ন' : 'Realized Loan Profit'}
                   </div>
                   <div className="text-slate-400 text-[11px]">
-                    {payments.length} {language === 'bn' ? 'টি পরিশোধিত আদায়ের মাধ্যমে' : 'payments realized'}
+                    {payments.length} {language === 'bn' ? 'টি ঋণ আদায় ও পূর্ববর্তী ঋণের মুনাফাসহ' : 'repayments & past loan profits'}
                   </div>
                 </div>
                 <div className="text-base font-bold text-emerald-600">

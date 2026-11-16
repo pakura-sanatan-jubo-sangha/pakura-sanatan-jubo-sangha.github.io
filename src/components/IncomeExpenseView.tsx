@@ -83,15 +83,23 @@ export const IncomeExpenseView: React.FC<IncomeExpenseViewProps> = ({
 
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
 
-  const filteredItems = items.filter((item) => {
-    const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
+  const filteredItems = items.filter((item: any) => {
+    const matchesCategory =
+      selectedCategory === 'all' ||
+      item.category === selectedCategory ||
+      item.categoryLabel === selectedCategory;
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
-      item.category.toLowerCase().includes(q) ||
+      (item.category && item.category.toLowerCase().includes(q)) ||
+      (item.categoryLabel && item.categoryLabel.toLowerCase().includes(q)) ||
       (item.person && item.person.toLowerCase().includes(q)) ||
+      (item.createdBy && item.createdBy.toLowerCase().includes(q)) ||
       (item.note && item.note.toLowerCase().includes(q)) ||
-      item.paymentMethod.toLowerCase().includes(q);
+      (item.notes && item.notes.toLowerCase().includes(q)) ||
+      (item.description && item.description.toLowerCase().includes(q)) ||
+      (item.reference && item.reference.toLowerCase().includes(q)) ||
+      (item.paymentMethod && item.paymentMethod.toLowerCase().includes(q));
     return matchesCategory && matchesSearch;
   });
 
@@ -184,6 +192,13 @@ export const IncomeExpenseView: React.FC<IncomeExpenseViewProps> = ({
                 className="px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
               >
                 <option value="all">{language === 'bn' ? 'সকল ক্যাটাগরি' : 'All Categories'}</option>
+                {isIncome && (
+                  <option value="loan_profit">
+                    {language === 'bn'
+                      ? 'পূর্ববর্তী ঋণের মুনাফা (Previous Loan Profit)'
+                      : 'Previous Loan Profit'}
+                  </option>
+                )}
                 {categories.map((c) => (
                   <option key={c} value={c}>
                     {c}
@@ -236,13 +251,20 @@ export const IncomeExpenseView: React.FC<IncomeExpenseViewProps> = ({
                   <tr key={item.incomeId ? `inc-${item.incomeId}-${idx}` : item.expenseId ? `exp-${item.expenseId}-${idx}` : `item-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                     <td className="p-3 text-slate-500">{item.date}</td>
                     <td className="p-3 font-semibold text-slate-800 dark:text-slate-200">
-                      {item.category}
+                      {item.categoryLabel ||
+                        (item.category === 'loan_profit'
+                          ? language === 'bn'
+                            ? 'পূর্ববর্তী ঋণের মুনাফা (Pre-Website Loan Profit)'
+                            : 'Previous Loan Profit'
+                          : item.category)}
                     </td>
                     <td className="p-3 text-slate-600 dark:text-slate-400">
-                      {item.receivedBy || item.paidBy || '—'}
+                      {item.receivedBy || item.paidBy || item.person || item.createdBy || '—'}
                     </td>
                     <td className="p-3 text-slate-500 uppercase">{item.paymentMethod}</td>
-                    <td className="p-3 text-slate-500 max-w-xs truncate">{item.notes || '—'}</td>
+                    <td className="p-3 text-slate-500 max-w-xs truncate">
+                      {item.notes || item.note || item.description || '—'}
+                    </td>
                     <td
                       className={`p-3 text-right font-bold ${
                         isIncome ? 'text-teal-600 dark:text-teal-400' : 'text-red-600 dark:text-red-400'

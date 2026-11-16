@@ -841,6 +841,58 @@ export default function App() {
     handleViewReceipt(result.receipt.receiptId);
   };
 
+  const handleRecordPreviousLoanProfit = (params: {
+    amount: number;
+    date: string;
+    paymentMethod: PaymentMethod;
+    description?: string;
+    reference?: string;
+  }) => {
+    if (!isAdmin) {
+      showToast(
+        language === 'bn'
+          ? 'শুধুমাত্র অ্যাডমিন পূর্ববর্তী ঋণের মুনাফা যুক্ত করতে পারেন।'
+          : 'Only Admin can record profit from previous loans.'
+      );
+      return;
+    }
+    const result = StorageService.recordPreviousLoanProfit({
+      ...params,
+      currentUser,
+    });
+    setAppData(result.data);
+    showToast(
+      language === 'bn'
+        ? `পূর্ববর্তী ঋণের মুনাফা ৳${params.amount.toLocaleString()} সফলভাবে প্রফিট সেকশনে যুক্ত হয়েছে!`
+        : `Recorded ৳${params.amount.toLocaleString()} profit from previous loans into Profit!`
+    );
+    triggerAutoSaveToGoogleSheets(result.data);
+    handleViewReceipt(result.receipt.receiptId);
+  };
+
+  const handleDeletePreviousLoanProfit = (incomeId: string) => {
+    if (!isAdmin) {
+      showToast(
+        language === 'bn'
+          ? 'শুধুমাত্র অ্যাডমিন পূর্ববর্তী ঋণের মুনাফা মুছতে পারেন।'
+          : 'Only Admin can delete previous loan profit entries.'
+      );
+      return;
+    }
+    const result = StorageService.deletePreviousLoanProfit(incomeId, currentUser);
+    if (result.success) {
+      setAppData(result.data);
+      showToast(
+        language === 'bn'
+          ? 'পূর্ববর্তী ঋণের মুনাফা এন্ট্রি সফলভাবে মুছে ফেলা হয়েছে।'
+          : 'Previous loan profit entry deleted successfully.'
+      );
+      triggerAutoSaveToGoogleSheets(result.data);
+    } else {
+      showToast(result.message);
+    }
+  };
+
   const handleAddIncomeExpense = (
     type: 'income' | 'expense',
     data: {
@@ -1580,11 +1632,14 @@ export default function App() {
               members={appData.members}
               distributions={appData.profitDistributions || []}
               expenses={appData.expenses || []}
+              incomes={appData.incomes || []}
               currentUser={currentUser}
               language={language}
               onCreateLoan={handleCreateLoan}
               onReceivePayment={handleReceiveLoanPayment}
               onRecordRepaidLoan={handleRecordRepaidLoan}
+              onRecordPreviousLoanProfit={handleRecordPreviousLoanProfit}
+              onDeletePreviousLoanProfit={handleDeletePreviousLoanProfit}
               onViewReceipt={handleViewReceipt}
               onAllocateProfit={handleAllocateProfit}
             />
@@ -1838,16 +1893,15 @@ export default function App() {
           !isViewOnly ? 'pb-20 lg:pb-3.5' : ''
         }`}
       >
-        <span>Developed by </span>
         <OwnerProfileHover
           name="Kajal Chandra Das"
           language={language}
           placement="top"
           align="center"
           alwaysEnable
-          className="font-semibold text-slate-800 dark:text-slate-200"
+          className="font-semibold text-slate-700 dark:text-slate-300"
         >
-          Kajal Chandra Das
+          <span>Developed by Kajal Chandra Das</span>
         </OwnerProfileHover>
       </footer>
 

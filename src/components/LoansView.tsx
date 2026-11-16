@@ -10,6 +10,7 @@ import {
   Member,
   ProfitDistribution,
   ExpenseRecord,
+  IncomeRecord,
 } from '../types';
 import { getTranslation } from '../lib/translations';
 import { StorageService } from '../lib/storage';
@@ -37,6 +38,8 @@ import {
   AlertCircle,
   Tag,
   Percent,
+  Trash2,
+  Banknote,
 } from 'lucide-react';
 
 interface LoansViewProps {
@@ -47,6 +50,7 @@ interface LoansViewProps {
   members?: Member[];
   distributions?: ProfitDistribution[];
   expenses?: ExpenseRecord[];
+  incomes?: IncomeRecord[];
   currentUser: UserAccount;
   language: Language;
   onCreateLoan: (
@@ -77,6 +81,14 @@ interface LoansViewProps {
     paymentMethod: PaymentMethod;
     notes: string;
   }) => void;
+  onRecordPreviousLoanProfit?: (params: {
+    amount: number;
+    date: string;
+    paymentMethod: PaymentMethod;
+    description?: string;
+    reference?: string;
+  }) => void;
+  onDeletePreviousLoanProfit?: (incomeId: string) => void;
   onViewReceipt: (receiptId: string) => void;
   onAllocateProfit?: (params: {
     periodType: 'monthly' | 'yearly' | 'custom';
@@ -97,11 +109,14 @@ export const LoansView: React.FC<LoansViewProps> = ({
   members = [],
   distributions = [],
   expenses = [],
+  incomes = [],
   currentUser,
   language,
   onCreateLoan,
   onReceivePayment,
   onRecordRepaidLoan,
+  onRecordPreviousLoanProfit,
+  onDeletePreviousLoanProfit,
   onViewReceipt,
   onAllocateProfit,
 }) => {
@@ -143,6 +158,15 @@ export const LoansView: React.FC<LoansViewProps> = ({
   const [repaidMethod, setRepaidMethod] = useState<PaymentMethod>('cash');
   const [repaidNotes, setRepaidNotes] = useState<string>('');
 
+  // 3b. Record Profit from Previous (Pre-Website) Loans Modal
+  const [showPastProfitModal, setShowPastProfitModal] = useState(false);
+  const [pastProfitAmount, setPastProfitAmount] = useState<number>(0);
+  const [pastProfitDate, setPastProfitDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [pastProfitMethod, setPastProfitMethod] = useState<PaymentMethod>('cash');
+  const [pastProfitReference, setPastProfitReference] = useState<string>('');
+  const [pastProfitNotes, setPastProfitNotes] = useState<string>('');
+  const [confirmDeletePastProfitId, setConfirmDeletePastProfitId] = useState<string | null>(null);
+
   // 4. Borrower Lifetime History Modal
   const [selectedBorrower, setSelectedBorrower] = useState<Borrower | null>(null);
 
@@ -169,7 +193,10 @@ export const LoansView: React.FC<LoansViewProps> = ({
   const totalOutstanding = activeLoans.reduce((sum, l) => sum + (l.remainingPrincipal || 0), 0);
   const totalLateFees = contributions.reduce((sum, c) => sum + (c.lateFee || 0), 0);
   const loanProfitOnly = loans.reduce((sum, l) => sum + (l.totalProfitPaid || 0), 0);
-  const grossLoanProfit = loanProfitOnly + totalLateFees;
+  const incomeRecordsList = incomes.length > 0 ? incomes : StorageService.getIncomeRecords();
+  const previousLoanProfitEntries = incomeRecordsList.filter((i) => i.category === 'loan_profit');
+  const previousLoanProfitTotal = previousLoanProfitEntries.reduce((sum, i) => sum + (i.amount || 0), 0);
+  const grossLoanProfit = loanProfitOnly + totalLateFees + previousLoanProfitTotal;
 
   // Association Expenses (Jerseys, T-Shirts, Puja, Events, Office, etc.) deducted solely from total loan profit
   const expenseRecords = expenses.length > 0 ? expenses : StorageService.getExpenseRecords();
@@ -247,6 +274,37 @@ export const LoansView: React.FC<LoansViewProps> = ({
     setRepaidBPhone('');
     setRepaidBNid('');
     setRepaidNotes('');
+  };
+
+  const handlePastProfitSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanAmt = Number(pastProfitAmount || 0);
+    if (cleanAmt <= 0) return;
+
+    if (onRecordPreviousLoanProfit) {
+      onRecordPreviousLoanProfit({
+        amount: cleanAmt,
+        date: pastProfitDate,
+        paymentMethod: pastProfitMethod,
+        description: pastProfitNotes.trim(),
+        reference: pastProfitReference.trim(),
+      });
+    } else {
+      StorageService.recordPreviousLoanProfit({
+        amount: cleanAmt,
+        date: pastProfitDate,
+        paymentMethod: pastProfitMethod,
+        description: pastProfitNotes.trim(),
+        reference: pastProfitReference.trim(),
+        currentUser,
+      });
+    }
+
+    setShowPastProfitModal(false);
+    setPastProfitAmount(0);
+    setPastProfitReference('');
+    setPastProfitNotes('');
+    setActiveTab('profit_distribution');
   };
 
   const handleConfirmAllocation = (e: React.FormEvent) => {
@@ -375,6 +433,13 @@ export const LoansView: React.FC<LoansViewProps> = ({
         {canManage ? (
           <div className="flex items-center gap-2 flex-wrap">
             <button
+              onClick={() => setShowPastProfitModal(true)}
+              className="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:text-amber-300 border border-amber-300 dark:border-amber-700 flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+            >
+              <Banknote className="w-4 h-4 text-amber-600" />
+              <span>{language === 'bn' ? 'পূর্ববর্তী ঋণের মুনাফা যোগ' : 'Add Past Loan Profit'}</span>
+            </button>
+            <button
               onClick={() => setShowRepaidModal(true)}
               className="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
             >
@@ -447,8 +512,8 @@ export const LoansView: React.FC<LoansViewProps> = ({
             <span className="text-[11px] text-slate-400 block mt-0.5">
               {canManage
                 ? (language === 'bn'
-                    ? `মোট মুনাফা ৳${grossLoanProfit.toLocaleString()} | সমিতি ব্যয় কর্তন ৳${totalExpenses.toLocaleString()}`
-                    : `Gross ৳${grossLoanProfit.toLocaleString()} | Expenses Deducted ৳${totalExpenses.toLocaleString()}`)
+                    ? `মোট মুনাফা ৳${grossLoanProfit.toLocaleString()}${previousLoanProfitTotal > 0 ? ` (পূর্ববর্তী ঋণ ৳${previousLoanProfitTotal.toLocaleString()} সহ)` : ''} | সমিতি ব্যয় কর্তন ৳${totalExpenses.toLocaleString()}`
+                    : `Gross ৳${grossLoanProfit.toLocaleString()}${previousLoanProfitTotal > 0 ? ` (incl. Past Loans ৳${previousLoanProfitTotal.toLocaleString()})` : ''} | Expenses Deducted ৳${totalExpenses.toLocaleString()}`)
                 : (language === 'bn'
                     ? 'আপনার অ্যাকাউন্টে যোগ হওয়া নিজস্ব ঋণ মুনাফা লভ্যাংশ স্থিতি'
                     : 'Personal loan profit dividend credited to your account')}
@@ -456,10 +521,18 @@ export const LoansView: React.FC<LoansViewProps> = ({
           </div>
 
           {canManage ? (
-            <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <span className="text-[11px] text-slate-500 font-medium">
-                {language === 'bn' ? 'সদস্য একাউন্টে বন্টন:' : 'Member Dividend:'}
-              </span>
+            <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('profit_distribution');
+                  setShowPastProfitModal(true);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:text-amber-300 text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+              >
+                <Plus className="w-3 h-3" />
+                <span>{language === 'bn' ? 'পূর্ববর্তী মুনাফা' : 'Past Profit'}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -538,12 +611,12 @@ export const LoansView: React.FC<LoansViewProps> = ({
               }`}
             >
               <Coins className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'সদস্য মুনাফা বন্টন' : 'Member Profit Allocation'}</span>
-              {distributions.length > 0 && (
+              <span>{language === 'bn' ? 'মুনাফা ও লভ্যাংশ বন্টন' : 'Profit & Allocation'}</span>
+              {(distributions.length > 0 || previousLoanProfitEntries.length > 0) && (
                 <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                   activeTab === 'profit_distribution' ? 'bg-white text-emerald-800' : 'bg-emerald-600 text-white'
                 }`}>
-                  {distributions.length}
+                  {distributions.length + previousLoanProfitEntries.length}
                 </span>
               )}
             </button>
@@ -930,14 +1003,24 @@ export const LoansView: React.FC<LoansViewProps> = ({
               </div>
 
               {canManage && (
-                <button
-                  type="button"
-                  onClick={handleOpenAllocateModal}
-                  className="px-4 py-2.5 rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-2 shrink-0 self-start sm:self-auto"
-                >
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  <span>{language === 'bn' ? 'নতুন লভ্যাংশ বন্টন করুন' : 'New Profit Allocation'}</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap shrink-0 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setShowPastProfitModal(true)}
+                    className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-900 text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Banknote className="w-4 h-4" />
+                    <span>{language === 'bn' ? 'পূর্ববর্তী ঋণ মুনাফা যোগ করুন' : 'Add Past Loan Profit'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenAllocateModal}
+                    className="px-4 py-2.5 rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-2"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>{language === 'bn' ? 'নতুন লভ্যাংশ বন্টন করুন' : 'New Profit Allocation'}</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -968,7 +1051,11 @@ export const LoansView: React.FC<LoansViewProps> = ({
                 ৳{grossLoanProfit.toLocaleString()}
               </div>
               <span className="text-[10px] text-slate-400 mt-0.5 block">
-                {language === 'bn' ? 'ঋণ মুনাফা ও বিলম্ব ফি' : 'Loan profit & late fees'}
+                {previousLoanProfitTotal > 0
+                  ? (language === 'bn'
+                      ? `অনলাইন ৳${loanProfitOnly.toLocaleString()} + পূর্ববর্তী ৳${previousLoanProfitTotal.toLocaleString()} + ফি ৳${totalLateFees.toLocaleString()}`
+                      : `Online ৳${loanProfitOnly.toLocaleString()} + Past ৳${previousLoanProfitTotal.toLocaleString()} + Fees ৳${totalLateFees.toLocaleString()}`)
+                  : (language === 'bn' ? 'ঋণ মুনাফা ও বিলম্ব ফি' : 'Loan profit & late fees')}
               </span>
             </div>
 
@@ -1007,6 +1094,137 @@ export const LoansView: React.FC<LoansViewProps> = ({
                 {distributions.length} {language === 'bn' ? 'টি বন্টন সম্পন্ন' : 'cycles completed'}
               </span>
             </div>
+          </div>
+
+          {/* Previous (Pre-Website) Loan Profit Entries Section */}
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Banknote className="w-4 h-4 text-amber-600" />
+                  <h4 className="font-bold text-sm text-slate-900 dark:text-white">
+                    {language === 'bn'
+                      ? 'পূর্ববর্তী অফলাইন ঋণসমূহের মুনাফা (ওয়েবসাইট চালুর আগের হিসাব)'
+                      : 'Profit Earned from Previous (Pre-Website) Loans'}
+                  </h4>
+                  {previousLoanProfitTotal > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      ৳{previousLoanProfitTotal.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  {language === 'bn'
+                    ? 'পুরনো ঋণের আলাদা রেকর্ড না তুলেই সরাসরি পূর্ববর্তী ঋণসমূহ থেকে অর্জিত মুনাফা এখানে প্রফিট সেকশনে যুক্ত করতে পারবেন।'
+                    : 'Enter profit earned from past loans prior to the website directly into the Profit section without migrating individual loan records.'}
+                </p>
+              </div>
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => setShowPastProfitModal(true)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer self-start sm:self-auto shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'পূর্ববর্তী মুনাফা যোগ করুন' : 'Add Past Profit'}</span>
+                </button>
+              )}
+            </div>
+
+            {previousLoanProfitEntries.length === 0 ? (
+              <div className="py-8 px-4 text-center text-xs text-slate-400">
+                {language === 'bn'
+                  ? 'এখনো ওয়েবসাইট চালুর পূর্ববর্তী কোনো ঋণের মুনাফা আলাদাভাবে যুক্ত করা হয়নি।'
+                  : 'No profit from previous pre-website loans has been entered yet.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 text-slate-500 dark:text-slate-400 font-semibold">
+                      <th className="p-3.5">{t.date}</th>
+                      <th className="p-3.5">{language === 'bn' ? 'বিবরণ ও রেফারেন্স' : 'Description & Reference'}</th>
+                      <th className="p-3.5">{t.paymentMethod}</th>
+                      <th className="p-3.5">{language === 'bn' ? 'লিপিবদ্ধকারী' : 'Recorded By'}</th>
+                      <th className="p-3.5 text-center">{language === 'bn' ? 'রশিদ' : 'Receipt'}</th>
+                      <th className="p-3.5 text-right">{language === 'bn' ? 'মুনাফার পরিমাণ' : 'Profit Amount'}</th>
+                      {canManage && <th className="p-3.5 text-right">{language === 'bn' ? 'অ্যাকশন' : 'Action'}</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {previousLoanProfitEntries.map((entry) => (
+                      <tr key={entry.incomeId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="p-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{entry.date}</td>
+                        <td className="p-3.5">
+                          <div className="font-semibold text-slate-900 dark:text-white">{entry.description}</div>
+                          {entry.reference && (
+                            <div className="text-[10px] text-amber-700 dark:text-amber-400 font-medium mt-0.5">
+                              {language === 'bn' ? 'রেফারেন্স:' : 'Ref:'} {entry.reference}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3.5 uppercase text-slate-500 font-semibold">{entry.paymentMethod}</td>
+                        <td className="p-3.5 text-slate-500 truncate max-w-[140px]">{entry.createdBy || 'Admin'}</td>
+                        <td className="p-3.5 text-center">
+                          {entry.receiptId ? (
+                            <button
+                              type="button"
+                              onClick={() => onViewReceipt(entry.receiptId!)}
+                              className="text-amber-600 dark:text-amber-400 font-semibold hover:underline cursor-pointer"
+                            >
+                              #{entry.receiptId}
+                            </button>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="p-3.5 text-right font-black text-emerald-600 dark:text-emerald-400">
+                          +৳{(entry.amount || 0).toLocaleString()}
+                        </td>
+                        {canManage && (
+                          <td className="p-3.5 text-right whitespace-nowrap">
+                            {confirmDeletePastProfitId === entry.incomeId ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onDeletePreviousLoanProfit) {
+                                      onDeletePreviousLoanProfit(entry.incomeId);
+                                    } else {
+                                      StorageService.deletePreviousLoanProfit(entry.incomeId, currentUser);
+                                    }
+                                    setConfirmDeletePastProfitId(null);
+                                  }}
+                                  className="px-2 py-1 rounded-md text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+                                >
+                                  {language === 'bn' ? 'নিশ্চিত' : 'Delete'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeletePastProfitId(null)}
+                                  className="px-2 py-1 rounded-md text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
+                                >
+                                  {t.cancel}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeletePastProfitId(entry.incomeId)}
+                                title={language === 'bn' ? 'এন্ট্রি মুছুন' : 'Delete entry'}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* History of Profit Distributions */}
@@ -2195,6 +2413,182 @@ export const LoansView: React.FC<LoansViewProps> = ({
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>{language === 'bn' ? 'পরিশোধিত ঋণ সংরক্ষণ ও রশিদ তৈরি' : 'Save Repaid Loan & Issue Receipt'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 6: Record Profit from Previous (Pre-Website) Loans */}
+      {showPastProfitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl animate-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-amber-600">
+                  <Banknote className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                    {language === 'bn' ? 'পূর্ববর্তী ঋণের মুনাফা যোগ করুন' : 'Record Profit from Previous Loans'}
+                  </h3>
+                  <span className="text-[11px] text-slate-400">
+                    {language === 'bn'
+                      ? 'ওয়েবসাইট চালুর আগের ঋণসমূহ থেকে অর্জিত মুনাফা প্রফিট সেকশনে যুক্ত করুন'
+                      : 'Enter profit earned before the website directly into the Profit section'}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPastProfitModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePastProfitSubmit} className="mt-4 space-y-3.5">
+              <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                {language === 'bn'
+                  ? 'আগের সকল ঋণের আলাদা তালিকা অনলাইনে তোলার প্রয়োজন নেই। পূর্ববর্তী ঋণ থেকে অর্জিত মোট মুনাফা এখানে লিখলে তা সরাসরি "মোট ঋণ মুনাফা" ও "প্রফিট" সেকশনে যুক্ত হবে এবং ক্যাশ/ব্যাংক স্থিতির সাথে স্বয়ংক্রিয়ভাবে সমন্বিত হবে।'
+                  : 'No need to migrate past individual loan records online. Any profit entered here adds directly to Total Loan Profit and Net Profit Reserve, and reconciles with your Cash/Bank balance.'}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    {language === 'bn' ? 'অর্জিত মুনাফার পরিমাণ (৳)' : 'Profit Amount Earned (৳)'}{' '}
+                    <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    step="any"
+                    placeholder="যেমন: ১৫০০০"
+                    value={pastProfitAmount || ''}
+                    onChange={(e) => setPastProfitAmount(Number(e.target.value))}
+                    className="w-full px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    {t.date} <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={pastProfitDate}
+                    onChange={(e) => setPastProfitDate(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {t.paymentMethod}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPastProfitMethod('cash')}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold border flex items-center justify-center gap-2 cursor-pointer ${
+                      pastProfitMethod === 'cash'
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <Wallet className="w-4 h-4" />
+                    <span>{t.cash}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPastProfitMethod('bank')}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold border flex items-center justify-center gap-2 cursor-pointer ${
+                      pastProfitMethod === 'bank'
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <Building2 className="w-4 h-4" />
+                    <span>{t.bank}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'সময়কাল / রেফারেন্স (ঐচ্ছিক)' : 'Period / Reference (Optional)'}
+                </label>
+                <input
+                  type="text"
+                  placeholder={language === 'bn' ? 'যেমন: ওয়েবসাইট পূর্ববর্তী হিসাব (২০২৪-২০২৫)' : 'e.g. Pre-website batch (2024-2025)'}
+                  value={pastProfitReference}
+                  onChange={(e) => setPastProfitReference(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {language === 'bn' ? 'বিস্তারিত বিবরণ / নোট (ঐচ্ছিক)' : 'Description / Notes (Optional)'}
+                </label>
+                <input
+                  type="text"
+                  placeholder={
+                    language === 'bn'
+                      ? 'যেমন: পূর্ববর্তী অফলাইন ঋণসমূহ থেকে অর্জিত মোট মুনাফা'
+                      : 'e.g. Profit earned from previous offline loans'
+                  }
+                  value={pastProfitNotes}
+                  onChange={(e) => setPastProfitNotes(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              {/* Live Preview Box */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1.5 text-xs">
+                <div className="flex justify-between text-slate-500">
+                  <span>{language === 'bn' ? 'বর্তমান মোট ঋণ মুনাফা:' : 'Current Gross Loan Profit:'}</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    ৳{grossLoanProfit.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between text-amber-600 dark:text-amber-400 font-semibold">
+                  <span>{language === 'bn' ? '(+) পূর্ববর্তী ঋণের মুনাফা:' : '(+) Adding Past Profit:'}</span>
+                  <span>+৳{(Number(pastProfitAmount) || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between pt-1.5 border-t border-slate-200 dark:border-slate-700 font-bold text-emerald-600 dark:text-emerald-400">
+                  <span>{language === 'bn' ? 'নতুন মোট ঋণ মুনাফা:' : 'New Gross Loan Profit:'}</span>
+                  <span>৳{(grossLoanProfit + Math.max(0, Number(pastProfitAmount) || 0)).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>{language === 'bn' ? 'নতুন বন্টনযোগ্য নিট মুনাফা:' : 'New Net Available Profit:'}</span>
+                  <span className="font-bold text-emerald-700 dark:text-emerald-300">
+                    ৳{(netLoanProfitAvailable + Math.max(0, Number(pastProfitAmount) || 0)).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowPastProfitModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={!pastProfitAmount || pastProfitAmount <= 0}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'প্রফিট সেকশনে সংরক্ষণ করুন' : 'Save to Profit Section'}</span>
                 </button>
               </div>
             </form>

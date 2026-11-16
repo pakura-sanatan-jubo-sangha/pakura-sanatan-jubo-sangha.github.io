@@ -2872,7 +2872,11 @@ export class StorageService {
     currentUser: UserAccount
   ): IncomeRecord {
     const records = this.getIncomeRecords();
-    const incomeId = `INC-${String(records.length + 1).padStart(6, '0')}`;
+    const maxNum = records.reduce((max, r) => {
+      const n = parseInt((r.incomeId || '').replace(/\D/g, ''), 10);
+      return Number.isFinite(n) && n > max ? n : max;
+    }, 0);
+    const incomeId = `INC-${String(Math.max(maxNum, records.length) + 1).padStart(6, '0')}`;
     const newIncome: IncomeRecord = {
       incomeId,
       date,
@@ -2889,7 +2893,8 @@ export class StorageService {
     this.createTransaction({
       type: 'income',
       referenceId: incomeId,
-      partyName: 'সাধারণ আয়',
+      date,
+      partyName: category === 'loan_profit' ? 'পূর্ববর্তী ঋণ মুনাফা' : 'সাধারণ আয়',
       description: `আয় [${category}]: ${description}`,
       debit: 0,
       credit: amount,
@@ -2908,6 +2913,183 @@ export class StorageService {
     });
 
     return newIncome;
+  }
+
+  /**
+   * Record profit earned from previous loans issued before the website existed,
+   * directly into the Loan Profit section without requiring individual past loan records.
+   */
+  static recordPreviousLoanProfit(params: {
+    amount: number;
+    date: string;
+    paymentMethod: PaymentMethod;
+    description?: string;
+    reference?: string;
+    currentUser: UserAccount;
+  }): { income: IncomeRecord; receipt: Receipt; data: FullAppData } {
+    const {
+      amount,
+      date,
+      paymentMethod,
+      description = '',
+      reference = '',
+      currentUser,
+    } = params;
+
+    const cleanAmount = Math.max(0, Number(amount) || 0);
+    if (cleanAmount <= 0) {
+      throw new Error('Profit amount must be greater than zero');
+    }
+
+    const cleanDate = date || new Date().toISOString().split('T')[0];
+    const cleanDesc =
+      description.trim() ||
+      'ওয়েবসাইট চালুর পূর্ববর্তী ঋণসমূহ থেকে অর্জিত মুনাফা (Previous Loans Profit)';
+    const cleanRef = reference.trim();
+
+    const records = this.getIncomeRecords();
+    const maxNum = records.reduce((max, r) => {
+      const n = parseInt((r.incomeId || '').replace(/\D/g, ''), 10);
+      return Number.isFinite(n) && n > max ? n : max;
+    }, 0);
+    const incomeId = `INC-${String(Math.max(maxNum, records.length) + 1).padStart(6, '0')}`;
+    const receiptId = this.generateReceiptId();
+
+    const newIncome: IncomeRecord = {
+      incomeId,
+      date: cleanDate,
+      category: 'loan_profit',
+      categoryLabel: 'পূর্ববর্তী ঋণের মুনাফা (Pre-Website Loan Profit)',
+      amount: cleanAmount,
+      description: cleanDesc,
+      paymentMethod,
+      ...(cleanRef ? { reference: cleanRef } : {}),
+      receiptId,
+      createdBy: currentUser.displayName,
+      createdAt: new Date().toISOString(),
+    };
+
+    records.unshift(newIncome);
+    this.saveIncomeRecords(records);
+
+    const receiptPurpose = `পূর্ববর্তী ঋণের মুনাফা জমা${cleanRef ? ` (${cleanRef})` : ''}: ${cleanDesc}`;
+    const receipt = this.createReceipt({
+      receiptId,
+      transactionId: incomeId,
+      name: 'পূর্ববর্তী ঋণ মুনাফা (Pre-Website Loans)',
+      phone: '',
+      amount: cleanAmount,
+      purpose: receiptPurpose,
+      date: cleanDate,
+      receivedBy: currentUser.displayName,
+      paymentMethod,
+      type: 'loan_profit',
+    });
+
+    this.createTransaction({
+      type: 'income',
+      referenceId: incomeId,
+      date: cleanDate,
+      partyName: 'পূর্ববর্তী ঋণ মুনাফা',
+      description: `পূর্ববর্তী ঋণ মুনাফা${cleanRef ? ` (${cleanRef})` : ''}: ${cleanDesc}`,
+      debit: 0,
+      credit: cleanAmount,
+      paymentMethod,
+      createdBy: currentUser.displayName,
+    });
+
+    this.reconcileTransactions();
+
+    this.logActivity({
+      userId: currentUser.userId,
+      userDisplayName: currentUser.displayName,
+      role: currentUser.role,
+      action: 'RECORD_PREVIOUS_LOAN_PROFIT',
+      module: 'Loans',
+      referenceId: incomeId,
+      description: `পূর্ববর্তী ঋণ মুনাফা যোগ: ৳${cleanAmount.toLocaleString()} [${paymentMethod}]${cleanRef ? ` (${cleanRef})` : ''} - ${cleanDesc}`,
+    });
+
+    return { income: newIncome, receipt, data: this.getAppData() };
+  }
+
+  /**
+   * Remove a previously recorded pre-website loan profit entry and its linked ledger/receipt records.
+   */
+  static deletePreviousLoanProfit(
+    incomeId: string,
+    currentUser: UserAccount
+  ): { success: boolean; message: string; data: FullAppData } {
+    if (!currentUser || currentUser.role !== 'admin') {
+      return {
+        success: false,
+        message: 'শুধুমাত্র অ্যাডমিন পূর্ববর্তী ঋণের মুনাফা রেকর্ড মুছতে পারবেন।',
+        data: this.getAppData(),
+      };
+    }
+
+    const records = this.getIncomeRecords();
+    const target = records.find((r) => r.incomeId === incomeId && r.category === 'loan_profit');
+    if (!target) {
+      return {
+        success: false,
+        message: 'সংশ্লিষ্ট পূর্ববর্তী ঋণ মুনাফার রেকর্ডটি খুঁজে পাওয়া যায়নি।',
+        data: this.getAppData(),
+      };
+    }
+
+    const remainingIncomes = records.filter((r) => r.incomeId !== incomeId);
+    localStorage.setItem(STORAGE_KEYS.INCOME, JSON.stringify(remainingIncomes));
+    FirebaseSyncService.deleteIncome(incomeId).catch(() => {});
+
+    // Remove linked master ledger transaction(s)
+    const rawTrx = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
+    if (rawTrx) {
+      try {
+        const trxList: Transaction[] = JSON.parse(rawTrx);
+        const toDeleteTrx = trxList.filter(
+          (t) => t.referenceId === incomeId || t.transactionId === `TRX-I-${incomeId}`
+        );
+        const keptTrx = trxList.filter(
+          (t) => t.referenceId !== incomeId && t.transactionId !== `TRX-I-${incomeId}`
+        );
+        localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(keptTrx));
+        toDeleteTrx.forEach((t) => {
+          FirebaseSyncService.deleteTransaction(t.transactionId).catch(() => {});
+        });
+      } catch {}
+    }
+
+    // Remove linked receipt voucher if any
+    if (target.receiptId) {
+      const rawReceipts = localStorage.getItem(STORAGE_KEYS.RECEIPTS);
+      if (rawReceipts) {
+        try {
+          const rList: Receipt[] = JSON.parse(rawReceipts);
+          const keptReceipts = rList.filter((r) => r.receiptId !== target.receiptId);
+          localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(keptReceipts));
+          FirebaseSyncService.deleteReceipt(target.receiptId).catch(() => {});
+        } catch {}
+      }
+    }
+
+    this.reconcileTransactions();
+
+    this.logActivity({
+      userId: currentUser.userId,
+      userDisplayName: currentUser.displayName,
+      role: currentUser.role,
+      action: 'DELETE_PREVIOUS_LOAN_PROFIT',
+      module: 'Loans',
+      referenceId: incomeId,
+      description: `পূর্ববর্তী ঋণ মুনাফা রেকর্ড বাতিল: ৳${(target.amount || 0).toLocaleString()} (${target.description})`,
+    });
+
+    return {
+      success: true,
+      message: 'পূর্ববর্তী ঋণের মুনাফা এন্ট্রি সফলভাবে মুছে ফেলা হয়েছে।',
+      data: this.getAppData(),
+    };
   }
 
   static getExpenseRecords(): ExpenseRecord[] {
@@ -3191,13 +3373,16 @@ export class StorageService {
           list.some((t) => t.referenceId === i.incomeId || t.transactionId === `TRX-I-${i.incomeId}`);
 
         if (i.incomeId && !alreadyExists) {
+          const isLoanProfit = i.category === 'loan_profit';
           list.push({
             transactionId: `TRX-I-${i.incomeId}`,
             date: i.date || new Date().toISOString().split('T')[0],
             type: 'income',
             referenceId: i.incomeId,
-            partyName: i.category || 'বিবিধ আয়',
-            description: `আয় [${i.category}]: ${i.description}`,
+            partyName: isLoanProfit ? 'পূর্ববর্তী ঋণ মুনাফা' : (i.category || 'বিবিধ আয়'),
+            description: isLoanProfit
+              ? `পূর্ববর্তী ঋণ মুনাফা${i.reference ? ` (${i.reference})` : ''}: ${i.description}`
+              : `আয় [${i.category}]: ${i.description}`,
             debit: 0,
             credit: i.amount || 0,
             balanceAfter: 0,
@@ -3313,6 +3498,7 @@ export class StorageService {
   static createTransaction(data: {
     type: Transaction['type'];
     referenceId: string;
+    date?: string;
     memberSystemId?: string;
     borrowerId?: string;
     partyName: string;
@@ -3377,7 +3563,7 @@ export class StorageService {
 
     const newTrx: Transaction = {
       transactionId: nextId,
-      date: new Date().toISOString().split('T')[0],
+      date: data.date || new Date().toISOString().split('T')[0],
       type: data.type,
       referenceId: data.referenceId,
       memberSystemId: data.memberSystemId,
@@ -4158,11 +4344,20 @@ export class StorageService {
     
     const contributions = data ? data.contributions : this.getContributions();
     const totalLateFees = contributions.reduce((sum, c) => sum + (c.lateFee || 0), 0);
-    // User mandate: "This late fee will be added to the total loan profit."
-    const totalLoanProfit = loans.reduce((sum, l) => sum + (l.totalProfitPaid || 0), 0) + totalLateFees;
-
     const incomeRecords = data ? (data.incomeRecords || data.incomes || []) : this.getIncomeRecords();
-    const totalIncome = incomeRecords.reduce((sum, i) => sum + (i.amount || 0), 0) + totalLoanProfit;
+    const previousLoanProfit = incomeRecords
+      .filter((i) => i.category === 'loan_profit')
+      .reduce((sum, i) => sum + (i.amount || 0), 0);
+    const otherIncomeTotal = incomeRecords
+      .filter((i) => i.category !== 'loan_profit')
+      .reduce((sum, i) => sum + (i.amount || 0), 0);
+    // Include online loan profits + late fees + previous (pre-website) loan profits
+    const totalLoanProfit =
+      loans.reduce((sum, l) => sum + (l.totalProfitPaid || 0), 0) +
+      totalLateFees +
+      previousLoanProfit;
+
+    const totalIncome = otherIncomeTotal + totalLoanProfit;
 
     const expenseRecords = data ? (data.expenseRecords || data.expenses || []) : this.getExpenseRecords();
     const totalExpense = expenseRecords.reduce((sum, e) => sum + (e.amount || 0), 0);
@@ -5065,11 +5260,17 @@ export class StorageService {
       allocationDate,
     } = params;
 
-    // 1. Calculate Gross Loan Profit
+    // 1. Calculate Gross Loan Profit (Online Loans + Late Fees + Previous Pre-Website Loan Profits)
     const loans = this.getLoans();
     const contributions = this.getContributions();
     const totalLateFees = contributions.reduce((sum, c) => sum + (c.lateFee || 0), 0);
-    const grossLoanProfit = loans.reduce((sum, l) => sum + (l.totalProfitPaid || 0), 0) + totalLateFees;
+    const previousLoanProfit = this.getIncomeRecords()
+      .filter((i) => i.category === 'loan_profit')
+      .reduce((sum, i) => sum + (i.amount || 0), 0);
+    const grossLoanProfit =
+      loans.reduce((sum, l) => sum + (l.totalProfitPaid || 0), 0) +
+      totalLateFees +
+      previousLoanProfit;
 
     // 2. Association expenses (Jerseys, T-shirts, Puja, Events, Office, etc.) deducted solely from total loan profit
     const expenses = this.getExpenseRecords();

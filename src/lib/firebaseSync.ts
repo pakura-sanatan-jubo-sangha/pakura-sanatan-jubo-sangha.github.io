@@ -2730,20 +2730,22 @@ export class FirebaseSyncService {
     const path = `incomes/${income.incomeId}`;
     try {
       const ref = doc(db, 'incomes', income.incomeId);
-      await setDoc(
-        ref,
-        {
-          incomeId: income.incomeId,
-          date: income.date,
-          category: income.category,
-          amount: Number(income.amount || 0),
-          description: income.description || '',
-          paymentMethod: income.paymentMethod || 'cash',
-          receiptId: income.receiptId || '',
-          createdAt: income.createdAt || new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      const payload: Record<string, any> = {
+        incomeId: income.incomeId,
+        date: income.date,
+        category: income.category,
+        amount: Number(income.amount || 0),
+        description: income.description || '',
+        paymentMethod: income.paymentMethod || 'cash',
+        receiptId: income.receiptId || '',
+        createdBy: income.createdBy || '',
+        createdAt: income.createdAt || new Date().toISOString(),
+      };
+      if (income.categoryLabel) payload.categoryLabel = income.categoryLabel;
+      if (income.reference) payload.reference = income.reference;
+      if (income.person) payload.person = income.person;
+      if (income.note) payload.note = income.note;
+      await setDoc(ref, payload, { merge: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
@@ -3780,6 +3782,35 @@ export class FirebaseSyncService {
       unsubscribes.push(unsub);
     } catch (e) {
       console.warn('Realtime rules listener notice:', e);
+    }
+
+    // 9. Real-time Incomes Listener (Includes previous pre-website loan profit records)
+    try {
+      const unsub = onSnapshot(
+        collection(db, 'incomes'),
+        (snap) => {
+          const incomes: IncomeRecord[] = parseSnapshot(snap, (d) => {
+            const inc = d.data();
+            const incId = inc?.incomeId || d.id;
+            if (!incId) return null;
+            return {
+              ...inc,
+              incomeId: incId,
+              amount: Number(inc?.amount || 0),
+              paymentMethod: inc?.paymentMethod || 'cash',
+            } as IncomeRecord;
+          });
+          if (incomes.length > 0) {
+            onUpdate({ incomes, incomeRecords: incomes });
+          }
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'incomes');
+        }
+      );
+      unsubscribes.push(unsub);
+    } catch (e) {
+      console.warn('Realtime incomes listener notice:', e);
     }
 
     // Return cleanup unsubscribe function

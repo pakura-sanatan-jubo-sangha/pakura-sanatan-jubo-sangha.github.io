@@ -30,7 +30,6 @@ import {
   Eye,
   FileText,
 } from 'lucide-react';
-import { OwnerProfileHover } from './OwnerProfileHover';
 
 interface ReceiptsViewProps {
   receipts: Receipt[];
@@ -361,7 +360,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                   </div>
 
                   <h3 className="font-bold text-sm text-slate-900 dark:text-white mt-2">
-                    <OwnerProfileHover name={displayName} language={language} />
+                    {displayName}
                   </h3>
                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">
                     {r.purpose || getTypeName(r.type)}

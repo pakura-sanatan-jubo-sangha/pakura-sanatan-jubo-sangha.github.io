@@ -47,7 +47,7 @@ import {
   RefreshCw,
   Globe,
 } from 'lucide-react';
-import { OwnerProfileHover, OwnerSocialLinksModal } from './OwnerProfileHover';
+import { OwnerSocialLinksModal } from './OwnerProfileHover';
 
 interface AdminAndRulesViewProps {
   users: UserAccount[];
@@ -748,9 +748,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-slate-900 dark:text-white text-sm">
-                    <OwnerProfileHover name="Kajol Chandra Das" language={language}>
-                      কাজল চন্দ্র দাস (Kajol Chandra Das)
-                    </OwnerProfileHover>
+                    কাজল চন্দ্র দাস (Kajol Chandra Das)
                   </span>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white">
                     MAIN ADMIN
@@ -876,9 +874,7 @@ export const AdminAndRulesView: React.FC<AdminAndRulesViewProps> = ({
                         <tr key={`${u.userId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                           <td className="p-3">
                             <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
-                              <span>
-                                <OwnerProfileHover name={u.name || u.displayName} language={language} />
-                              </span>
+                              <span>{u.name || u.displayName}</span>
                               {isTargetAdmin && (
                                 <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 font-semibold">
                                   {language === 'bn' ? 'সহকারী অ্যাডমিন' : 'Admin'}

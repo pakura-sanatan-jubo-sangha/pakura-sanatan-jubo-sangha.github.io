@@ -24,7 +24,6 @@ import {
   LogIn,
   Trash2,
 } from 'lucide-react';
-import { OwnerProfileHover } from './OwnerProfileHover';
 
 interface MembersViewProps {
   members: Member[];
@@ -248,7 +247,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
-                        <OwnerProfileHover name={member.name} language={language} />
+                        {member.name}
                       </h3>
                       <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         <Phone className="w-3 h-3 text-slate-400" />

@@ -111,12 +111,15 @@ export const OwnerProfileHover: React.FC<OwnerProfileHoverProps> = ({
   className = '',
 }) => {
   const { links } = useOwnerSocialLinks();
-  const [isOpen, setIsOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [pinnedByClick, setPinnedByClick] = useState(false);
   const closeTimeoutRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLSpanElement>(null);
 
   const displayContent = children ?? name ?? '';
   const isOwner = alwaysEnable || isOwnerNameMatch(typeof name === 'string' ? name : String(displayContent || ''));
   const activeEntries = getActiveSocialLinkEntries(links);
+  const isOpen = hovered || pinnedByClick;
 
   useEffect(() => {
     return () => {
@@ -126,7 +129,29 @@ export const OwnerProfileHover: React.FC<OwnerProfileHoverProps> = ({
     };
   }, []);
 
-  // Only render hover interaction if this is the owner's name AND at least one valid link exists in Firebase
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setPinnedByClick(false);
+        setHovered(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPinnedByClick(false);
+        setHovered(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  // Only render interaction if enabled AND at least one valid link exists in Firebase
   if (!isOwner || activeEntries.length === 0) {
     return <>{displayContent}</>;
   }
@@ -136,7 +161,7 @@ export const OwnerProfileHover: React.FC<OwnerProfileHoverProps> = ({
       window.clearTimeout(closeTimeoutRef.current);
       closeTimeoutRef.current = null;
     }
-    setIsOpen(true);
+    setHovered(true);
   };
 
   const handleMouseLeave = () => {
@@ -144,8 +169,18 @@ export const OwnerProfileHover: React.FC<OwnerProfileHoverProps> = ({
       window.clearTimeout(closeTimeoutRef.current);
     }
     closeTimeoutRef.current = window.setTimeout(() => {
-      setIsOpen(false);
+      setHovered(false);
     }, 160);
+  };
+
+  const handleTriggerClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (pinnedByClick) {
+      setPinnedByClick(false);
+      setHovered(false);
+    } else {
+      setPinnedByClick(true);
+    }
   };
 
   const positionClass =
@@ -162,18 +197,28 @@ export const OwnerProfileHover: React.FC<OwnerProfileHoverProps> = ({
 
   return (
     <span
+      ref={containerRef}
       className={`relative inline-flex items-center group/owner-hover ${className}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onFocus={handleMouseEnter}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setPinnedByClick(false);
           handleMouseLeave();
         }
       }}
     >
       <span
+        role="button"
         tabIndex={0}
+        onClick={handleTriggerClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setPinnedByClick((prev) => !prev);
+          }
+        }}
         className="underline decoration-dotted decoration-amber-500/60 underline-offset-4 hover:text-amber-700 dark:hover:text-amber-400 transition-colors cursor-pointer focus:outline-none"
       >
         {displayContent}
