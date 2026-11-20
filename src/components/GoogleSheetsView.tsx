@@ -372,7 +372,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
       </div>
 
       {/* Main Admin Sheet Modification Permission Banner */}
-      {!isAuthorizedSheetModifier ? (
+      {!isAuthorizedSheetModifier && (
         <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 flex items-start gap-3 shadow-2xs">
           <Lock className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-xs leading-relaxed">
@@ -387,15 +387,6 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
                 : 'No one other than the main admin using freelancerkajolchandradas@gmail.com is authorized to modify or sync the Google Sheet.'}
             </p>
           </div>
-        </div>
-      ) : (
-        <div className="px-4 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2 shadow-2xs">
-          <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-          <span className="font-semibold">
-            {language === 'bn'
-              ? 'প্রধান অ্যাডমিন অনুমতি সক্রিয়: freelancerkajolchandradas@gmail.com (গুগল শিট পরিবর্তনের পূর্ণ কর্তৃত্ব রয়েছে)'
-              : 'Main Admin Authorized: freelancerkajolchandradas@gmail.com (Full Google Sheet modification access active)'}
-          </span>
         </div>
       )}
 
@@ -423,7 +414,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {language === 'bn'
                 ? 'ওয়েবসাইটের সকল ডাটা ক্রমানুসারে প্রতিটি ট্যাবে সেভ করতে নিচের বাটনে চাপুন।'
-                : 'Press the button below to systematically push all data to the 14 tabs.'}
+                : 'Press the button below to systematically push all data.'}
             </div>
 
             {spreadsheetId && (
@@ -533,7 +524,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
             <div>
               <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-bold text-sm">
                 <PlusCircle className="w-4 h-4 text-emerald-600" />
-                <span>{language === 'bn' ? '১. নতুন ১৪-ট্যাবের স্প্রেডশিট তৈরি' : '1. Create 14-Tab Spreadsheet'}</span>
+                <span>{language === 'bn' ? '১. নতুন স্প্রেডশিট তৈরি' : '1. Create Spreadsheet'}</span>
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
                 {language === 'bn'

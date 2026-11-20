@@ -368,16 +368,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <h3 className="text-sm font-bold text-slate-900 dark:text-white">
             {language === 'bn' ? 'প্রধান অ্যাডমিনের পাসওয়ার্ড পরিবর্তন' : 'Change Main Admin Password'}
           </h3>
-          <span className="ml-auto px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300">
-            {language === 'bn' ? 'প্রধান সুপার অ্যাডমিন' : 'Main Super Admin'}
-          </span>
         </div>
-
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-          {language === 'bn'
-            ? 'উন্মুক্ত নিবন্ধন বন্ধ। সাধারণ ব্যবহারকারীদের জন্য ড্যাশবোর্ডটি শুধু দেখার জন্য (View-Only)। পাসওয়ার্ড পরিবর্তন বা রিসেট শুধুমাত্র ফায়ারবেসে নিবন্ধিত নির্ধারিত অনুমোদিত জিমেইল যাচাইয়ের মাধ্যমেই সম্পন্ন হবে।'
-            : 'Open registration is disabled. Password updates and resets are strictly restricted to the exact authorized Gmail registered in Firebase.'}
-        </p>
 
         {passwordError && (
           <div className="mt-3 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
@@ -410,7 +401,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 setPasswordConfirmEmail(e.target.value);
                 setPasswordError(null);
               }}
-              placeholder={language === 'bn' ? 'নিবন্ধিত অনুমোদিত জিমেইল লিখুন...' : 'Enter exact Gmail registered in Firebase...'}
+              placeholder={language === 'bn' ? 'জিমেইল লিখুন...' : 'Enter Gmail ...'}
               className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
             />
           </div>
@@ -504,9 +495,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <Settings className="w-4 h-4 text-amber-600 dark:text-amber-400" />
             <span>{language === 'bn' ? 'সংগঠন ও ক্লাউড সিঙ্ক সেটিংস (Organisation & Cloud Sync)' : 'Organisation & Cloud Sync Settings'}</span>
           </h3>
-          <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2.5 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
-            {language === 'bn' ? 'আর্থিক নীতিমালা ও ক্লাউড সিঙ্ক' : 'Financial Policy & Cloud Sync'}
-          </span>
         </div>
 
         <form onSubmit={handleSubmitGeneral} className="mt-4 space-y-4 max-w-xl">
@@ -782,84 +770,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span>{language === 'bn' ? 'ফাইল নির্বাচন করে রিস্টোর করুন' : 'Choose File to Restore'}</span>
               <input type="file" accept=".json" onChange={handleFileChange} className="hidden" />
             </label>
-          </div>
-        </div>
-
-        {/* Firebase Cloud Firestore Sync Card */}
-        <div className="mt-4 p-4 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
-                <Flame className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>{language === 'bn' ? 'ফায়ারবেস ক্লাউড ফায়ারস্টোর লাইভ সিঙ্ক' : 'Firebase Cloud Firestore Live Sync'}</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
-                    {language === 'bn' ? 'সংযুক্ত ও সক্রিয়' : 'Connected & Active'}
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 break-all">
-                  DB ID: ai-studio-financemanagemen-81457425-0980-4771-905d-23c7a458e7e5
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={handleSyncToFirestore}
-                disabled={firebaseSyncLoading}
-                className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${firebaseSyncLoading ? 'animate-spin' : ''}`} />
-                <span>{language === 'bn' ? 'ক্লাউডে সিঙ্ক করুন (Upload)' : 'Sync to Cloud'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handlePullFromFirestore}
-                disabled={firebaseSyncLoading}
-                className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-amber-500 hover:text-amber-600 disabled:opacity-50 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
-              >
-                <Database className="w-3.5 h-3.5 text-amber-600" />
-                <span>{language === 'bn' ? 'ক্লাউড থেকে যাচাই (Pull)' : 'Pull & Check'}</span>
-              </button>
-            </div>
-          </div>
-
-          {firebaseSyncStatus && (
-            <div
-              className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 animate-in fade-in ${
-                firebaseSyncStatus.type === 'success'
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                  : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'
-              }`}
-            >
-              {firebaseSyncStatus.type === 'success' ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              ) : (
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-              )}
-              <span>{firebaseSyncStatus.message}</span>
-            </div>
-          )}
-
-          {/* GitHub Pages & Authorized Domains Status */}
-          <div className="p-3 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 text-[11px] text-blue-900 dark:text-blue-200 space-y-1">
-            <div className="font-bold flex items-center justify-between flex-wrap gap-1">
-              <span>
-                {language === 'bn' ? 'গুগল সাইন-ইন অথরাইজড ডোমেইন (GitHub Pages):' : 'Google Sign-In Authorized Domain (GitHub Pages):'}
-              </span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 font-semibold">
-                pakura-sanatan-jubo-sangha.github.io
-              </span>
-            </div>
-            <p className="text-slate-600 dark:text-slate-400">
-              {language === 'bn'
-                ? 'গুগল পপআপ সাইন-ইনের জন্য এই ডোমেইনটি ফায়ারবেস কনসোলে (Authentication -> Settings -> Authorized domains) যুক্ত করুন। তবে সরাসরি ইমেইল/পাসওয়ার্ড ও মোবাইল লগইন যে কোনো ডোমেইনে এখনই সম্পূর্ণ সক্রিয়।'
-                : 'For Google popup Sign-In, add this domain under Firebase Console (Authentication -> Settings -> Authorized domains). Direct Gmail/Password and Mobile login work immediately on all domains.'}
-            </p>
           </div>
         </div>
 
